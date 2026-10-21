@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hearthwood</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/web/pdf_viewer.css" />
+  <link rel="stylesheet" href="src/style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+        "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js",
+        "pdfjs": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs",
+        "lucide": "https://cdn.jsdelivr.net/npm/lucide@0.469.0/+esm"
+      }
+    }
+  </script>
+</head>
+<body>
+  <!-- 3D world -->
+  <div id="library"></div>
+
+  <!-- Classic grid library -->
+  <section id="classic" hidden>
+    <div class="classic-inner">
+      <h1>Your books</h1>
+      <div id="grid"></div>
+    </div>
+  </section>
+
+  <div id="hud">
+    <div class="brand"><i data-lucide="trees"></i> Hearthwood <span class="sub">reading village</span></div>
+    <div class="hud-actions">
+      <button id="btnView" class="icon-btn" title="Switch between 3D world and grid (G)"><i data-lucide="layout-grid" class="show-3d"></i><i data-lucide="box" class="show-grid"></i></button>
+      <button id="btnChar" class="icon-btn" title="Change character (C)"><i data-lucide="user-round"></i></button>
+      <button id="btnMusic" class="icon-btn" title="Sound on / off (M)"><i data-lucide="music-2" class="on"></i><i data-lucide="volume-x" class="off"></i></button>
+      <button class="icon-btn themeToggle" title="Day / night (T)"><i data-lucide="moon" class="to-dark"></i><i data-lucide="sun" class="to-light"></i></button>
+      <button id="btnImport" class="pill" title="Import PDFs (I)"><i data-lucide="plus"></i> Add PDFs</button>
+    </div>
+    <input id="fileInput" type="file" accept="application/pdf" multiple hidden />
+  </div>
+  <div id="help">
+    <span><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> walk</span>
+    <span><kbd>Shift</kbd> run</span>
+    <span><kbd>Space</kbd> jump</span>
+    <span><kbd>Enter</kbd> read</span>
+    <span><kbd>C</kbd> character</span>
+    <span><kbd>scroll</kbd> zoom</span>
+  </div>
+  <div id="zone"></div>
+  <div id="prompt" hidden></div>
+  <div id="dropzone" hidden><div><i data-lucide="file-up"></i> Drop PDFs to shelve them</div></div>
+  <div id="fade"></div>
+
+  <!-- Reader -->
+  <div id="reader" hidden>
+    <header class="r-bar">
+      <button id="rBack" class="icon-btn" title="Back to library (Esc)"><i data-lucide="arrow-left"></i></button>
+      <button id="rSidebarBtn" class="icon-btn" title="Contents & annotations (S)"><i data-lucide="panel-left"></i></button>
+      <div id="rTitle" class="r-title"></div>
+      <div class="r-group">
+        <button id="rPrev" class="icon-btn" title="Previous page (←)"><i data-lucide="chevron-left"></i></button>
+        <input id="rPage" type="number" min="1" />
+        <span id="rTotal"></span>
+        <button id="rNext" class="icon-btn" title="Next page (→)"><i data-lucide="chevron-right"></i></button>
+      </div>
+      <div class="r-group" id="zoomGroup">
+        <button id="rZoomOut" class="icon-btn" title="Zoom out (-)"><i data-lucide="zoom-out"></i></button>
+        <button id="rFit" class="icon-btn" title="Fit width"><i data-lucide="move-horizontal"></i></button>
+        <button id="rZoomIn" class="icon-btn" title="Zoom in (+)"><i data-lucide="zoom-in"></i></button>
+      </div>
+      <div class="r-group">
+        <button id="rBookmark" class="icon-btn" title="Bookmark page (B)"><i data-lucide="bookmark"></i></button>
+        <button id="rAddNote" class="icon-btn" title="Note on this page (N)"><i data-lucide="sticky-note"></i></button>
+        <div class="seg">
+          <button id="rModeScroll" title="Scroll view"><i data-lucide="scroll-text"></i></button>
+          <button id="rMode3d" title="3D book (3)"><i data-lucide="book-open"></i></button>
+        </div>
+        <button id="rMusic" class="icon-btn" title="Sound on / off (M)"><i data-lucide="music-2" class="on"></i><i data-lucide="volume-x" class="off"></i></button>
+        <button class="icon-btn themeToggle" title="Day / night (T)"><i data-lucide="moon" class="to-dark"></i><i data-lucide="sun" class="to-light"></i></button>
+      </div>
+    </header>
+    <div class="r-body">
+      <aside id="sidebar">
+        <nav class="tabs">
+          <button data-tab="contents" title="Contents"><i data-lucide="list-tree"></i></button>
+          <button data-tab="bookmarks" title="Bookmarks"><i data-lucide="bookmark"></i></button>
+          <button data-tab="highlights" title="Highlights"><i data-lucide="highlighter"></i></button>
+          <button data-tab="notes" title="Notes"><i data-lucide="notebook-pen"></i></button>
+        </nav>
+        <div class="tab-title" id="sbTitle"></div>
+        <div id="sbList"></div>
+      </aside>
+      <main id="rMain">
+        <div id="pageWrap"><div id="pages"></div></div>
+        <div id="view3d" hidden></div>
+        <div id="progress"><i></i></div>
+      </main>
+    </div>
+    <div id="selBar" hidden>
+      <button data-color="yellow" class="sw yellow" title="Yellow"></button>
+      <button data-color="green" class="sw green" title="Green"></button>
+      <button data-color="blue" class="sw blue" title="Blue"></button>
+      <button data-color="pink" class="sw pink" title="Pink"></button>
+      <span class="sep"></span>
+      <button id="selNote" title="Highlight with a note"><i data-lucide="message-square-plus"></i></button>
+      <button id="selCopy" title="Copy"><i data-lucide="copy"></i></button>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div id="modal" hidden>
+    <div class="modal-card">
+      <h3 id="mTitle"></h3>
+      <blockquote id="mQuote"></blockquote>
+      <div id="mColors" class="colors">
+        <button data-color="yellow" class="sw yellow"></button>
+        <button data-color="green" class="sw green"></button>
+        <button data-color="blue" class="sw blue"></button>
+        <button data-color="pink" class="sw pink"></button>
+      </div>
+      <textarea id="mText" placeholder="Write a note…"></textarea>
+      <div class="modal-actions">
+        <button id="mDelete" class="danger"><i data-lucide="trash-2"></i> Delete</button>
+        <span style="flex:1"></span>
+        <button id="mCancel">Cancel</button>
+        <button id="mSave" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
