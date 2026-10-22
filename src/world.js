@@ -8,19 +8,30 @@ import { sound } from './audio.js';
 import { Character, CHARACTERS } from './character.js';
 import { toon, timeUniform } from './toon.js';
 import { Scenery, zoneAt, inPond, pondDist, ZONES } from './scenery.js';
+import { palette, resolvePalette } from './environment.js';
+import { Weather } from './weather.js';
+import { Portfolio } from './portfolio.js';
+import { Life } from './life.js';
+import { Fishing } from './fishing.js';
+import { Experience } from './experience.js';
+import { buildNook } from './nook.js';
 
 const SHELF = { W: 3.2, H: 2.3, D: 0.55, levels: [0.1, 1.17] };
-const SHELF_COLS = [-7.5, -2.5, 2.5, 7.5];
-const BOUND = 44;
+// shelf spots: two full rows, then the outer spots of a third row (the reading nook sits in the middle)
+const SHELF_SLOTS = [[-7.5, -6], [-2.5, -6], [2.5, -6], [7.5, -6], [-7.5, -12], [-2.5, -12], [2.5, -12], [7.5, -12], [-7.5, -18], [7.5, -18]];
+const BOUND = 60;
 const SPINE_COLORS = ['#e07a5f', '#3d405b', '#81b29a', '#f2cc8f', '#6d597a', '#b56576', '#355070', '#e56b6f', '#4d908e', '#c08552'];
 const PROP_COLORS = ['#e07a5f', '#81b29a', '#f2cc8f', '#6d597a', '#4d908e', '#e56b6f'];
 
 const PALETTE = {
-  light: { shadow: '#2f4a2a', shadowO: 0.24, hemiSky: '#fff6e8', hemiGround: '#8fb26a', hemi: 1.2, sun: 2.3, sunColor: '#fff1d6',
-    fire: 0.3, bloom: 0.12, lamp: 0, bulb: 0.6 },
-  dark: { shadow: '#000000', shadowO: 0.35, hemiSky: '#6f84d0', hemiGround: '#14262a', hemi: 0.7, sun: 0.5, sunColor: '#9fb2ff',
-    fire: 1, bloom: 0.85, lamp: 9, bulb: 4 },
+  day: palette({ shadow: '#2f4a2a', shadowO: 0.24, hemiSky: '#fff6e8', hemiGround: '#8fb26a', hemi: 1.2, sun: 2.3, sunColor: '#fff1d6',
+    fire: 0.3, fireCol: '#ffffff', bloom: 0.12, lamp: 0, bulb: 0.6 }),
+  night: palette({ shadow: '#000000', shadowO: 0.35, hemiSky: '#6f84d0', hemiGround: '#14262a', hemi: 0.7, sun: 0.5, sunColor: '#9fb2ff',
+    fire: 1, fireCol: '#ffe08a', bloom: 0.85, lamp: 9, bulb: 4 }),
+  dusk: palette({ shadow: '#5a2e1e', hemiSky: '#ffc89a', hemiGround: '#b5875a', sun: 1.8, sunColor: '#ff9a5c', bloom: 0.35, lamp: 3, bulb: 2 }),
+  rain: palette({ shadowO: 0.08, hemiSky: '#cfd8dc', sun: 0.45, sunColor: '#e3e9ec', bloom: 0.2, fire: 0 }),
 };
+const ENV_KEYS = ['day', 'dusk', 'rain', 'snow', 'leaves', 'snowCover'];
 
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const lerpAngle = (a, b, t) => a + (((((b - a) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) * t;
@@ -102,7 +113,8 @@ export class Library {
     this.busy = false;
     this.facing = Math.PI;
     this.walkT = 0;
-    this.zoom = 0.8;
+    this.zoom = innerWidth < 700 ? 1.1 : 0.8;   // phones get a wider view
+    this.stick = { x: 0, z: 0 };                  // analog input from the touch joystick
     this.wade = 0;
     this.time = 0;
 
@@ -135,6 +147,15 @@ export class Library {
     this.buildProps();
     this.buildPlayer();
     this.scenery = new Scenery(this);
+    this.weather = new Weather(this.scene);
+    this.buildSeats();
+    buildNook(this);
+    this.interactables = [];
+    this.buildGallery();
+    this.portfolio = new Portfolio(this);
+    this.experience = new Experience(this);
+    this.life = new Life(this);
+    this.fishing = new Fishing(this);
     for (let i = 0; i < 4; i++) this.ensureShelf(i);
     this.assignMaterials();
     this.char = new Character(this.player, (m) => toon('#ffffff', { map: m.map ?? null, color: m.map ? '#ffffff' : m.color }));
@@ -143,7 +164,7 @@ export class Library {
     this.setCharacter(CHARACTERS.includes(saved) ? saved : 'Mage');
     this.bindEvents();
     this.resize();
-    this.setTheme(document.documentElement.dataset.theme === 'dark');
+    this.setEnvironment({ hours: 13, day: 1, dusk: 0, rain: 0, snow: 0, leaves: 0, snowCover: 0, season: 'summer' });
     this.camera.position.set(0, 14, 18);
     r.setAnimationLoop(() => this.frame());
   }
@@ -226,6 +247,156 @@ export class Library {
     this.addProp(holder, body);
   }
 
+  /** Something you can walk up to and press Enter on: { x, z, r, title, sub, action } */
+  addInteractable(it) { this.interactables.push(it); return it; }
+
+  // ---------- cover gallery: easels between the Reading Grove and Việt's Garden ----------
+  buildGallery() {
+    const G = ZONES.gallery, wood = toon('#8a5a3c');
+    this.easels = [-8.2, -6, -3.8, 3.8, 6, 8.2].map((x) => {
+      const g = new THREE.Group();
+      for (const [lx, rz] of [[-0.45, 0.12], [0.45, -0.12]]) {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 2.1, 6), wood);
+        leg.position.set(lx, 1.0, 0); leg.rotation.z = rz; g.add(leg);
+      }
+      const back = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 2.0, 6), wood);
+      back.position.set(0, 0.95, -0.4); back.rotation.x = 0.35; g.add(back);
+      const shelf = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.06, 0.16), wood);
+      shelf.position.set(0, 0.7, 0.06); g.add(shelf);
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(1.12, 1.5, 0.07), toon('#c9a15a'));
+      const canvas = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.36), new THREE.MeshToonMaterial({ color: '#f4ecdc' }));
+      canvas.position.z = 0.04;
+      const art = new THREE.Group();
+      art.add(frame, canvas);
+      art.position.set(0, 1.47, 0.08); art.rotation.x = -0.32;
+      g.add(art);
+      g.position.set(x, 0, G.z);
+      g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      this.scene.add(g);
+      this.staticBox(x, 1, G.z, 0.6, 1, 0.3);
+      const spot = this.addInteractable({ x, z: G.z + 1.4, r: 1.2, title: 'Empty easel', sub: 'Add books and their covers hang here', action: () => {} });
+      return { g, art, canvas, spot };
+    });
+  }
+
+  /** The six most recently read books hang as paintings. */
+  updateGallery(list) {
+    const books = [...list].sort((a, b) => (b.lastOpened || b.added) - (a.lastOpened || a.added)).slice(0, this.easels.length);
+    this.easels.forEach((e, i) => {
+      const b = books[i];
+      e.canvas.material.map?.dispose();
+      e.canvas.material.map = null;
+      e.canvas.material.color.set(b?.cover ? '#ffffff' : '#f4ecdc');
+      if (b?.cover) {
+        const tex = new THREE.TextureLoader().load(b.cover);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        e.canvas.material.map = tex;
+        const ar = b.aspect || 0.75;
+        e.canvas.scale.set(Math.min(1, ar / 0.735), Math.min(1, 0.735 / ar), 1);
+      }
+      e.canvas.material.needsUpdate = true;
+      Object.assign(e.spot, b
+        ? { title: b.title, sub: `A painting of your book — page ${b.lastPage || 1} / ${b.pages}`, action: () => this.onOpen(b.id) }
+        : { title: 'Empty easel', sub: 'The covers of books you read hang here', action: () => {} });
+    });
+  }
+
+  // ---------- seats: sit down anywhere cozy and read ----------
+  buildSeats() {
+    const CF = ZONES.campfire, C = ZONES.cottage;
+    this.seats = [
+      { name: 'Plaza bench', x: -3.5, z: 2, y: 0.56, face: Math.PI / 2 },
+      { name: 'Plaza bench', x: 3.5, z: 2, y: 0.56, face: -Math.PI / 2 },
+      { name: 'End of the dock', x: -18.5, z: -2, y: 0.36, face: -Math.PI / 2, fishing: true },
+      { name: 'Garden stump', x: C.x - 4.4, z: C.z + 2.3, y: 0.48, face: Math.PI / 2 },
+    ];
+    for (let i = 0; i < 3; i++) {
+      const a = -0.6 + i * 2.1;
+      const x = CF.x + Math.cos(a) * 2.4, z = CF.z + Math.sin(a) * 2.4;
+      this.seats.push({ name: 'Log by the fire', x, z, y: 0.36, face: Math.atan2(CF.x - x, CF.z - z) });
+    }
+  }
+
+  sit(seat) {
+    this.seated = seat;
+    this.focusedSeat = null;
+    this.keys.clear();
+    const b = this.pBody;
+    b.type = CANNON.Body.KINEMATIC;
+    b.collisionResponse = false;
+    b.velocity.set(0, 0, 0);
+    b.position.set(seat.x, 0.42, seat.z);
+    this.char.setSitting(true);
+    sound.sfx('pop');
+    this.onSeated?.(seat);
+  }
+
+  stand() {
+    const s = this.seated;
+    if (!s) return;
+    this.fishing.reset();
+    this.seated = null;
+    const b = this.pBody;
+    b.position.set(s.x + Math.sin(s.face) * 1.0, 0.5, s.z + Math.cos(s.face) * 1.0);
+    b.velocity.set(0, 0, 0);
+    b.type = CANNON.Body.DYNAMIC;
+    b.collisionResponse = true;
+    b.wakeUp();
+    this.char.setSitting(false);
+    this.onFocus?.(null);
+  }
+
+  // ---------- pomodoro hourglass on the plaza table ----------
+  buildHourglass() {
+    const g = new THREE.Group();
+    const wood = toon('#7a4b33');
+    const glass = new THREE.MeshStandardMaterial({ color: '#e6f6ff', transparent: true, opacity: 0.32, roughness: 0.1, depthWrite: false });
+    this.sandMat = toon('#f2c14e');
+    const top = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.26, 20, 1, true), glass);
+    top.rotation.x = Math.PI; top.position.y = 0.42;
+    const bottom = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.26, 20, 1, true), glass);
+    bottom.position.y = 0.16;
+    this.sandTop = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.22, 20), this.sandMat);
+    this.sandTop.rotation.x = Math.PI;
+    this.sandTop.geometry.translate(0, 0.11, 0);   // pivot at the neck so it drains downward
+    this.sandTop.position.y = 0.3;
+    this.sandBottom = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.2, 20), this.sandMat);
+    this.sandBottom.geometry.translate(0, 0.1, 0);
+    this.sandBottom.position.y = 0.04;
+    this.stream = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.26, 6), this.sandMat);
+    this.stream.position.y = 0.17;
+    g.add(top, bottom, this.sandTop, this.sandBottom, this.stream);
+    for (const y of [0.02, 0.56]) {
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.05, 20), wood);
+      cap.position.y = y; g.add(cap);
+    }
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2;
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.54, 6), wood);
+      post.position.set(Math.cos(a) * 0.19, 0.29, Math.sin(a) * 0.19); g.add(post);
+    }
+    g.traverse((o) => { if (o.isMesh && o.material !== glass) o.castShadow = true; });
+    g.scale.setScalar(1.5);
+    g.position.set(0.5, 0.86, -0.35);
+    this.hourglass = g;
+    this.setPomodoro({ progress: 0, mode: 'focus', running: false });
+    return g;
+  }
+
+  /** progress 0..1 of the current session */
+  setPomodoro({ progress, mode, running }) {
+    const p = THREE.MathUtils.clamp(progress, 0, 1);
+    if (this.lastPomo != null && p < this.lastPomo - 0.5) {   // new session: flip it over
+      const g = this.hourglass;
+      this.tween(0.7, (t) => { g.rotation.z = Math.PI * 2 * ease(t); }).then(() => { g.rotation.z = 0; });
+    }
+    this.lastPomo = p;
+    this.sandTop.scale.setScalar(Math.max(0.001, Math.cbrt(1 - p)));
+    this.sandBottom.scale.setScalar(Math.max(0.001, Math.cbrt(p)));
+    this.stream.visible = running && p > 0 && p < 1;
+    this.sandMat.color.set(mode === 'focus' ? '#f2c14e' : '#81b29a');
+  }
+
   shadowed(obj) {
     obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     return obj;
@@ -248,6 +419,7 @@ export class Library {
       b.position.set(-0.3, 0.91 + i * 0.1, -0.1); b.rotation.y = i * 0.3;
       table.add(b);
     });
+    table.add(this.buildHourglass());
     table.position.set(0, 0, 2);
     s.add(this.shadowed(table));
     this.staticCylinder(0, 2, 1.1, 1);
@@ -402,11 +574,11 @@ export class Library {
 
   // ---------- shelves & books ----------
   ensureShelf(i) {
-    while (this.shelves.length <= i) {
-      const idx = this.shelves.length;
-      this.shelves.push(this.makeShelf(SHELF_COLS[idx % 4], -6 - Math.floor(idx / 4) * 6));
+    while (this.shelves.length <= i && this.shelves.length < SHELF_SLOTS.length) {
+      const [x, z] = SHELF_SLOTS[this.shelves.length];
+      this.shelves.push(this.makeShelf(x, z));
     }
-    return this.shelves[i];
+    return this.shelves[i];   // undefined once the grove is full
   }
 
   makeShelf(x, z) {
@@ -451,6 +623,7 @@ export class Library {
         if (--level < 0) { level = 1; shelfIdx++; }
       }
       const shelf = this.ensureShelf(shelfIdx);
+      if (!shelf) break;   // grove is full: the rest still show in the grid view and gallery
       group.position.set(cursor + t / 2, SHELF.levels[level] + 0.03 + h / 2, SHELF.D / 2 - w / 2 - 0.03);
       group.userData.homeZ = group.position.z;
       cursor += t + 0.01;
@@ -458,6 +631,7 @@ export class Library {
       this.books.set(book.id, { book, group });
     }
     this.sign.visible = list.length === 0;
+    this.updateGallery(list);
   }
 
   makeBook(book) {
@@ -560,13 +734,21 @@ export class Library {
     addEventListener('resize', () => this.resize());
     const norm = (k) => (k.length === 1 ? k.toLowerCase() : k);
     addEventListener('keydown', (e) => {
-      if (this.paused || e.target.matches?.('input, textarea')) return;
+      if (this.paused || this.reading || e.target.matches?.('input, textarea')) return;
       const k = norm(e.key);
+      if (this.seated) {
+        if (k === 'Enter') this.onSeatRead?.();
+        else if (k === 'b') this.onSeatPick?.();
+        else if (k === 'f' && this.seated.fishing) this.fishing.press();
+        else if (k === 'e' || k === 'Escape' || k.startsWith('Arrow') || 'wasd'.includes(k)) this.stand();
+        if (k.startsWith('Arrow') || k === ' ') e.preventDefault();
+        return;
+      }
+      if ((k === 'e' || k === 'Enter') && this.focusedSeat && !this.focused && !this.busy) { this.sit(this.focusedSeat); return; }
+      if ((k === 'e' || k === 'Enter') && this.focusedThing && !this.focused && !this.busy) { this.focusedThing.action(); return; }
       if (k.startsWith('Arrow') || k === ' ') e.preventDefault();
       this.keys.add(k);
-      if (k === ' ' && !e.repeat && !this.busy && Math.abs(this.pBody.velocity.y) < 0.4) {
-        this.pBody.velocity.y = 10; sound.sfx('jump');
-      }
+      if (k === ' ' && !e.repeat) this.jump();
       if ((k === 'Enter' || k === 'e') && this.focused && !this.busy) this.onOpen(this.focused);
       if (k === 'Delete' && this.focused && !this.busy) this.onDelete(this.focused);
     });
@@ -574,6 +756,23 @@ export class Library {
     addEventListener('blur', () => this.keys.clear());
 
     const el = this.renderer.domElement;
+    // two-finger pinch zooms the camera on touch screens
+    const touches = new Map();
+    let pinch = 0;
+    el.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') touches.set(e.pointerId, e); });
+    el.addEventListener('pointermove', (e) => {
+      if (!touches.has(e.pointerId)) return;
+      touches.set(e.pointerId, e);
+      if (touches.size !== 2) return;
+      const [a, b] = [...touches.values()];
+      const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      if (pinch) this.zoom = THREE.MathUtils.clamp(this.zoom * (pinch / d), 0.55, 1.8);
+      pinch = d;
+    });
+    const lift = (e) => { touches.delete(e.pointerId); if (touches.size < 2) pinch = 0; };
+    el.addEventListener('pointerup', lift);
+    el.addEventListener('pointercancel', lift);
+
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.zoom = THREE.MathUtils.clamp(this.zoom * (e.deltaY > 0 ? 1.08 : 0.92), 0.55, 1.6);
@@ -598,22 +797,47 @@ export class Library {
     this.camera.updateProjectionMatrix();
   }
 
-  setTheme(dark) {
-    const P = PALETTE[dark ? 'dark' : 'light'];
-    this.dark = dark;
-    const fog = this.scenery.setTheme(dark);
-    this.scene.background = new THREE.Color(fog);
-    this.scene.fog = new THREE.Fog(fog, 34, 72);
-    this.shadowMat.color.set(P.shadow);
+  /** Target time-of-day / weather (see environment.js); the frame loop eases towards it. */
+  setEnvironment(env, instant = false) {
+    this.envTarget = env;
+    if (!this.env || instant) { this.env = { ...env }; this.applyEnv(); }
+    if (env.season !== this.season) {
+      this.season = env.season;
+      this.scenery.ready.then(() => this.scenery.setSeason(this.season));
+    }
+  }
+
+  easeEnv(dt) {
+    const k = 1 - Math.exp(-1.2 * dt);
+    let moved = 0;
+    for (const key of ENV_KEYS) {
+      const d = this.envTarget[key] - this.env[key];
+      this.env[key] += d * k;
+      moved = Math.max(moved, Math.abs(d));
+    }
+    this.env.hours = this.envTarget.hours;
+    if (moved > 0.002) this.applyEnv();
+  }
+
+  applyEnv() {
+    const env = this.env;
+    const P = resolvePalette(PALETTE, env);
+    this.dark = env.day < 0.5;
+    const fog = this.scenery.setEnv(env);
+    this.scene.background = fog.clone();
+    this.scene.fog ??= new THREE.Fog(fog, 34, 72);
+    this.scene.fog.color.copy(fog);
+    this.shadowMat.color.copy(P.shadow);
     this.shadowMat.opacity = P.shadowO;
-    this.hemi.color.set(P.hemiSky);
-    this.hemi.groundColor.set(P.hemiGround);
+    this.hemi.color.copy(P.hemiSky);
+    this.hemi.groundColor.copy(P.hemiGround);
     this.hemi.intensity = P.hemi;
-    this.sun.color.set(P.sunColor);
+    this.sun.color.copy(P.sunColor);
     this.sun.intensity = P.sun;
-    this.fireMat.uniforms.uO.value = P.fire;
-    this.fireMat.uniforms.uCol.value.set(dark ? '#ffe08a' : '#ffffff');
+    this.fireMat.uniforms.uO.value = P.fire * (1 - env.rain) * (1 - env.snow * 0.7);
+    this.fireMat.uniforms.uCol.value.copy(P.fireCol);
     this.bloom.strength = P.bloom;
+    this.sign.material.color.setScalar(0.4 + 0.45 * env.day);   // keep the sign out of the bloom at night
     for (const { bulb, light } of this.lamps) {
       light.intensity = P.lamp;
       bulb.material.emissiveIntensity = P.bulb;
@@ -634,6 +858,7 @@ export class Library {
     }
     if (this.paused && !this.tweens.length) return;
     this.time += dt;
+    this.easeEnv(dt);
 
     if (!this.busy) this.controls(dt);
     else { this.moving = false; this.pBody.velocity.x *= 0.8; this.pBody.velocity.z *= 0.8; }
@@ -649,6 +874,10 @@ export class Library {
     const pp = this.player.position;
     timeUniform.value = this.time;
     this.scenery.update(dt, this.time, pp, this.wade);
+    this.life.update(dt, this.time, pp, this.seated);
+    this.fishing.update(dt);
+    this.portfolio.update(this.time);
+    this.experience.update(this.time, pp);
     const zone = zoneAt(pp.x, pp.z);
     if (zone !== this.zone) { this.zone = zone; this.onZone?.(zone); }
     this.ambT = (this.ambT || 0) + dt;
@@ -656,23 +885,46 @@ export class Library {
       this.ambT = 0;
       const fire = Math.max(0, 1 - Math.hypot(pp.x - ZONES.campfire.x, pp.z - ZONES.campfire.z) / 9);
       const water = Math.max(0, 1 - Math.max(0, pondDist(pp.x, pp.z)) * 1.5);
-      sound.setAmbience({ dark: this.dark, fire, water });
+      sound.setAmbience({ dark: this.dark, fire, water, rain: this.env.rain });
     }
     this.sign.position.y = 2.8 + Math.sin(this.time * 1.5) * 0.08;
     this.sign.quaternion.copy(this.camera.quaternion);
-    this.sun.position.set(pp.x + 8, 16, pp.z + 6);
+    // sun (or moon) travels across the sky with the clock
+    const arc = ((this.env.hours - 6) / 12) * Math.PI - (this.dark ? Math.PI : 0);
+    this.sun.position.set(pp.x - Math.cos(arc) * 14, 6 + Math.max(0, Math.sin(arc)) * 12, pp.z + 7);
+    this.weather.update(pp, { rain: this.env.rain, snow: this.env.snow, leaves: this.env.leaves });
     this.sun.target.position.set(pp.x, 0, pp.z);
 
     this.composer.render();
   }
 
+  jump() {
+    if (this.busy || this.paused || this.reading || this.seated || Math.abs(this.pBody.velocity.y) >= 0.4) return;
+    this.pBody.velocity.y = 10;
+    sound.sfx('jump');
+  }
+
   controls(dt) {
+    const stick = Math.hypot(this.stick.x, this.stick.z);
+    if (this.seated) {
+      this.moving = false;
+      if (stick > 0.6 && !this.reading) this.stand();   // pushing the joystick gets you up, like the arrow keys
+      return;
+    }
     const k = this.keys;
     let x = (k.has('ArrowRight') || k.has('d') ? 1 : 0) - (k.has('ArrowLeft') || k.has('a') ? 1 : 0);
     let z = (k.has('ArrowDown') || k.has('s') ? 1 : 0) - (k.has('ArrowUp') || k.has('w') ? 1 : 0);
     const len = Math.hypot(x, z) || 1;
     x /= len; z /= len;
-    const speed = (k.has('Shift') ? 8.5 : 5) * (1 - 0.45 * this.wade);
+    let mag = 1;
+    this.running = k.has('Shift');
+    if (stick > 0.15 && x === 0 && z === 0) {
+      // joystick: direction from the stick, a gentle push walks, pushing all the way runs
+      x = this.stick.x / stick; z = this.stick.z / stick;
+      mag = Math.min(1, stick);
+      this.running = stick > 0.92;
+    }
+    const speed = (this.running ? 8.5 : 5) * mag * (1 - 0.45 * this.wade);
     const v = this.pBody.velocity;
     const a = Math.min(1, dt * 12);
     v.x += (x * speed - v.x) * a;
@@ -683,13 +935,22 @@ export class Library {
 
   animatePlayer(dt) {
     const b = this.pBody.position;
+    if (this.seated) {
+      const s = this.seated;
+      this.facing = lerpAngle(this.facing, s.face, Math.min(1, dt * 8));
+      const y = s.y - this.char.hipsHeight + 0.1;
+      this.player.position.lerp(new THREE.Vector3(s.x, y, s.z), Math.min(1, dt * 8));
+      this.player.rotation.y = this.facing;
+      this.char.update(dt, { moving: false, running: false, air: false, landed: false });
+      return;
+    }
     const wet = inPond(b.x, b.z) && b.y < 0.6 ? 1 : 0;
     if (wet && this.wade < 0.5 && wet !== this.wasWet) sound.sfx('splash');
     this.wasWet = wet;
     this.wade = THREE.MathUtils.lerp(this.wade, wet, 1 - Math.exp(-8 * dt));
     this.player.position.set(b.x, b.y - 0.42 - this.wade * 0.55, b.z);
     this.player.rotation.y = this.facing;
-    const run = this.keys.has('Shift');
+    const run = this.running;
     // only count as airborne after a few frames off the ground, so bumping props doesn't trigger a jump pose
     const rawAir = this.pBody.position.y > 0.6 || Math.abs(this.pBody.velocity.y) > 2;
     this.airT = rawAir ? (this.airT || 0) + dt : 0;
@@ -716,7 +977,8 @@ export class Library {
 
   updateCamera(dt) {
     const p = this.player.position;
-    const want = new THREE.Vector3(p.x, 0, p.z).add(new THREE.Vector3(0, 13, 12).multiplyScalar(this.zoom));
+    this.camZoom = THREE.MathUtils.lerp(this.camZoom ?? this.zoom, this.seated ? Math.min(this.zoom, 0.5) : this.zoom, 1 - Math.exp(-2.5 * dt));
+    const want = new THREE.Vector3(p.x, 0, p.z).add(new THREE.Vector3(0, 13, 12).multiplyScalar(this.camZoom));
     this.camera.position.lerp(want, 1 - Math.exp(-4 * dt));
     this.lookAt ??= p.clone();
     this.lookAt.lerp(new THREE.Vector3(p.x, 0.6, p.z - 0.5), 1 - Math.exp(-6 * dt));
@@ -736,10 +998,33 @@ export class Library {
         if (d < bestD) { best = id; bestD = d; }
       }
     }
-    if (best !== this.focused) {
+    let seat = null;
+    if (!best && !this.busy && !this.seated) {
+      const p = this.player.position;
+      let sd = 1.5;
+      for (const s of this.seats) {
+        const d = Math.hypot(s.x - p.x, s.z - p.z);
+        if (d < sd) { seat = s; sd = d; }
+      }
+    }
+    let thing = null;
+    if (!best && !seat && !this.busy && !this.seated) {
+      const p = this.player.position;
+      let td = Infinity;
+      for (const it of this.interactables) {
+        const d = Math.hypot(it.x - p.x, it.z - p.z);
+        if (d < it.r && d < td) { thing = it; td = d; }
+      }
+    }
+    if (best !== this.focused || seat !== this.focusedSeat || thing !== this.focusedThing) {
       this.focused = best;
-      if (best) sound.sfx('click');
-      this.onFocus?.(best ? this.books.get(best).book : null);
+      this.focusedSeat = seat;
+      this.focusedThing = thing;
+      if (best || seat || thing) sound.sfx('click');
+      if (best) this.onFocus?.(this.books.get(best).book);
+      else if (seat) this.onSeatFocus?.(seat);
+      else if (thing) this.onThingFocus?.(thing);
+      else if (!this.seated) this.onFocus?.(null);
     }
     for (const [id, { group }] of this.books) {
       if (group.userData.homeParent) continue;

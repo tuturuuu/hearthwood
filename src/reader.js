@@ -27,7 +27,7 @@ export class Reader {
   get isOpen() { return !this.el.hidden; }
 
   // ---------- open / close ----------
-  async open(book) {
+  async open(book, { cozy = false } = {}) {
     const bytes = await db.getFile(book.id);
     if (!bytes) throw new Error('PDF data missing');
     this.book = book;
@@ -45,6 +45,7 @@ export class Reader {
     $('rTitle').textContent = book.title;
     $('rPage').max = pdf.numPages;
     this.el.hidden = false;
+    this.el.classList.toggle('cozy', cozy);
     if (innerWidth < 760) $('sidebar').classList.add('closed');
     book.lastOpened = Date.now();
 
@@ -68,6 +69,7 @@ export class Reader {
     this.pages = [];
     this.visible.clear();
     this.el.hidden = true;
+    this.el.classList.remove('cozy');
     this.pdf?.destroy();
     this.pdf = null;
     this.onClose(this.book.id);

@@ -61,11 +61,19 @@ export class Sound {
     if (!this.musicOn) return;
     const ctx = this.ensure();
     this.musicGain.gain.cancelScheduledValues(ctx.currentTime);
-    this.musicGain.gain.setTargetAtTime(0.55, ctx.currentTime, 0.8);
+    this.musicGain.gain.setTargetAtTime(this.musicLevel(), ctx.currentTime, 0.8);
     if (this.timer) return;
     this.next = ctx.currentTime + 0.1;
     this.startCrackle();
     this.timer = setInterval(() => this.schedule(), 30);
+  }
+
+  musicLevel() { return this.focus ? 0.3 : 0.55; }
+
+  /** During a pomodoro focus session the music sits further back. */
+  setFocus(on) {
+    this.focus = on;
+    if (this.ctx && this.timer) this.musicGain.gain.setTargetAtTime(this.musicLevel(), this.ctx.currentTime, 1.5);
   }
 
   stopMusic() {
@@ -174,20 +182,31 @@ export class Sound {
   hat(t, v) { this.noiseHit(t, 'highpass', 7000, 0.7, 0.05 * v, 0.05); }
 
   // ---------- ambience: birds by day, crickets by night, crackle near the fire ----------
-  setAmbience({ dark, fire = 0, water = 0 }) {
-    this.amb = { dark, fire, water };
-    if (!this.ctx || this.ambTimer) return;
-    this.ambBus = this.ctx.createGain();
-    this.ambBus.gain.value = 0.5;
-    this.ambBus.connect(this.master);
-    this.ambTimer = setInterval(() => this.ambientTick(), 120);
+  setAmbience({ dark, fire = 0, water = 0, rain = 0 }) {
+    this.amb = { dark, fire, water, rain };
+    if (!this.ctx) return;
+    if (!this.ambTimer) {
+      this.ambBus = this.ctx.createGain();
+      this.ambBus.gain.value = 0.5;
+      this.ambBus.connect(this.master);
+      this.ambTimer = setInterval(() => this.ambientTick(), 120);
+      // steady rain hiss, faded in/out by the weather
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noise; src.loop = true;
+      const lp = this.ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1600;
+      const hp = this.ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 300;
+      this.rainGain = this.ctx.createGain(); this.rainGain.gain.value = 0;
+      src.connect(lp); lp.connect(hp); hp.connect(this.rainGain); this.rainGain.connect(this.ambBus);
+      src.start();
+    }
+    this.rainGain.gain.setTargetAtTime(rain * 0.22, this.ctx.currentTime, 1.5);
   }
 
   ambientTick() {
     const ctx = this.ctx, a = this.amb;
     if (!a || !this.musicOn || ctx.state !== 'running') return;
     const t = ctx.currentTime + 0.05;
-    if (!a.dark && Math.random() < 0.05) {
+    if (!a.dark && a.rain < 0.5 && Math.random() < 0.05) {
       // a little bird: 2–4 quick chirps
       const base = 2400 + Math.random() * 1600, n = 2 + Math.floor(Math.random() * 3);
       for (let i = 0; i < n; i++) {
@@ -199,7 +218,7 @@ export class Sound {
         o.start(s); o.stop(s + 0.09);
       }
     }
-    if (a.dark && Math.random() < 0.35) {
+    if (a.dark && a.rain < 0.5 && Math.random() < 0.35) {
       // crickets: pulsed high tone
       const o = ctx.createOscillator(), g = ctx.createGain();
       o.frequency.value = 4300 + Math.random() * 400;
@@ -227,6 +246,38 @@ export class Sound {
     } else if (name === 'whoosh') {
       const f = this.noiseHit(t, 'bandpass', 300, 0.9, 0.3, 0.7, this.sfxBus);
       f.frequency.exponentialRampToValueAtTime(1600, t + 0.6);
+    } else if (name === 'bell') {
+      // soft three-note chime
+      [[880, 0], [1318.5, 0.18], [1760, 0.36]].forEach(([f, d]) => {
+        const o = ctx.createOscillator(), o2 = ctx.createOscillator(), g = ctx.createGain();
+        o.frequency.value = f; o2.frequency.value = f * 2.76;
+        const g2 = ctx.createGain(); g2.gain.value = 0.15;
+        o.connect(g); o2.connect(g2); g2.connect(g); g.connect(this.sfxBus);
+        g.gain.setValueAtTime(0.0001, t + d); g.gain.exponentialRampToValueAtTime(0.35, t + d + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + d + 2.2);
+        o.start(t + d); o2.start(t + d); o.stop(t + d + 2.3); o2.stop(t + d + 2.3);
+      });
+    } else if (name === 'quack') {
+      const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(420, t); o.frequency.exponentialRampToValueAtTime(300, t + 0.14);
+      f.type = 'bandpass'; f.frequency.value = 1100; f.Q.value = 4;
+      o.connect(f); f.connect(g); g.connect(this.sfxBus);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.08, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      o.start(t); o.stop(t + 0.18);
+    } else if (name === 'meow') {
+      const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(520, t); o.frequency.linearRampToValueAtTime(780, t + 0.18); o.frequency.exponentialRampToValueAtTime(430, t + 0.55);
+      f.type = 'lowpass'; f.frequency.value = 2200;
+      o.connect(f); f.connect(g); g.connect(this.sfxBus);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.09, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+      o.start(t); o.stop(t + 0.62);
+    } else if (name === 'plop') {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.setValueAtTime(900, t); o.frequency.exponentialRampToValueAtTime(260, t + 0.09);
+      o.connect(g); g.connect(this.sfxBus);
+      g.gain.setValueAtTime(0.18, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+      o.start(t); o.stop(t + 0.13);
     } else if (name === 'splash') {
       const f = this.noiseHit(t, 'bandpass', 1200, 0.7, 0.35, 0.45, this.sfxBus);
       f.frequency.exponentialRampToValueAtTime(400, t + 0.4);

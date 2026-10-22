@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { toon, addWind, canvasTexture, seeded, timeUniform } from './toon.js';
+import { palette, resolvePalette } from './environment.js';
 
 /*  Hearthwood — a cozy forest clearing.
  *
@@ -12,7 +13,14 @@ import { toon, addWind, canvasTexture, seeded, timeUniform } from './toon.js';
  */
 export const ZONES = {
   plaza: { x: 0, z: 2, r: 5.6 },
-  library: { x0: -11, x1: 11, z0: -34, z1: -3 },
+  library: { x0: -11, x1: 11, z0: -21, z1: -3 },
+  gallery: { x0: -10, x1: 10, z: -22.8 },
+  portfolio: { x: 0, z: -36.5, r: 11.5 },
+  // experience areas around the garden (see experience.js)
+  frontend: { x: -18.5, z: -18, r: 5.4 },
+  ai: { x: -20, z: -34, r: 5.6 },
+  data: { x: 20, z: -34, r: 5.6 },
+  origin: { x: 17, z: -20.6, r: 4.4 },
   pond: { x: -21, z: -2, rx: 6.5, rz: 5 },
   farm: { x0: 14, x1: 28, z0: -12, z1: 6 },
   barn: { x: 21.5, z: 12.5, w: 6, d: 4.6 },
@@ -20,12 +28,14 @@ export const ZONES = {
   cottage: { x: -13, z: 15, w: 6, d: 4.6 },
   campfire: { x: 9, z: 12 },
 };
-const PATHS = [[0, 2, 13.5, -2], [0, 2, -14.5, -2], [0, 2, -6, 11], [-6, 11, -13, 18.8], [0, 2, 9, 10], [13.5, -2, 16, 10.5], [16, 10.5, 18.4, 12.5]];
+export const PATHS = [[0, -20, 0, -25], [0, -36.5, -20, -34], [-20, -34, -18.5, -18], [-18.5, -18, -11, -14], [0, -36.5, 20, -34], [20, -34, 17, -20.6], [17, -20.6, 11, -16], [0, 2, 13.5, -2], [0, 2, -14.5, -2], [0, 2, -6, 11], [-6, 11, -13, 18.8], [0, 2, 9, 10], [13.5, -2, 16, 10.5], [16, 10.5, 18.4, 12.5]];
 const PATH_W = 1.05;
-const WORLD_R = 42;
+export const STATIONS = ['frontend', 'ai', 'data', 'origin'];
+const WORLD_R = 56;
 
 export const ZONE_NAMES = {
-  plaza: 'The Plaza', library: 'Reading Grove', pond: 'Willow Pond', farm: 'Sunny Farm',
+  plaza: 'The Plaza', library: 'Reading Grove', portfolio: 'Việt’s Garden',
+  frontend: 'UI Plaza', ai: 'Agent Lab', data: 'Data Observatory', origin: 'Origins', pond: 'Willow Pond', farm: 'Sunny Farm',
   barn: 'Sunny Farm', windmill: 'Sunny Farm', cottage: 'Hearth Cottage', campfire: 'Campfire', meadow: 'Meadow', forest: 'Whispering Woods',
 };
 
@@ -39,10 +49,18 @@ const NATURE_PAL = {
 const WINDY = { leafsGreen: 0.035, leafsDark: 0.03, leafsFall: 0.035, grass: 0.06, corn: 0.05 };
 
 const PALETTES = {
-  light: { grass: '#9cc56f', grass2: '#86b55f', path: '#ead2a4', soil: '#a8754b', sand: '#e6d3a3', fog: '#b9d89c',
-    deep: '#3f9db5', shallow: '#86d3d6', foam: '#f4fbf6', window: 0.15, lantern: 0, fire: 3, smoke: '#f4f1ea' },
-  dark: { grass: '#22413c', grass2: '#1c3733', path: '#3c4366', soil: '#2c2733', sand: '#39405e', fog: '#0e1a22',
-    deep: '#0f2a4a', shallow: '#1f4f6e', foam: '#7fa6c9', window: 2.6, lantern: 7, fire: 9, smoke: '#59607a' },
+  day: palette({ grass: '#9cc56f', grass2: '#86b55f', path: '#ead2a4', soil: '#a8754b', sand: '#e6d3a3', fog: '#b9d89c',
+    deep: '#3f9db5', shallow: '#86d3d6', foam: '#f4fbf6', blade: '#5f8f44', bladeTip: '#c7dd7c', smoke: '#f4f1ea',
+    window: 0.15, lantern: 0, fire: 3 }),
+  night: palette({ grass: '#22413c', grass2: '#1c3733', path: '#3c4366', soil: '#2c2733', sand: '#39405e', fog: '#0e1a22',
+    deep: '#0f2a4a', shallow: '#1f4f6e', foam: '#7fa6c9', blade: '#183530', bladeTip: '#3e7a62', smoke: '#59607a',
+    window: 2.6, lantern: 7, fire: 9 }),
+  dusk: palette({ grass: '#a9b466', grass2: '#94a65b', path: '#efc796', sand: '#efc79a', fog: '#e7b48e', deep: '#5d7fa6',
+    shallow: '#d9b090', foam: '#fff0dc', bladeTip: '#e4c776', smoke: '#f6dcc8', window: 1.4, lantern: 4 }),
+  rain: palette({ grass: '#7da35f', grass2: '#6b9455', path: '#c9b693', sand: '#c9bb98', fog: '#9fb1a9', deep: '#3a7c91',
+    shallow: '#6ea6aa', bladeTip: '#a6be6c', window: 0.8 }),
+  snow: palette({ grass: '#e8edf0', grass2: '#dce4e8', path: '#d9d0c4', soil: '#cfd4d8', sand: '#e3e3df', fog: '#dfe7ea',
+    blade: '#9fb5a8', bladeTip: '#f2f6f7', shallow: '#a9d4e0' }),
 };
 
 // ---------- zone geometry (shared by JS placement and the ground shader) ----------
@@ -58,11 +76,14 @@ export const inPond = (x, z) => pondDist(x, z) < -0.08 && !(z > -2.9 && z < -1.1
 const pathDist = (x, z) => {
   let d = Math.hypot(x - ZONES.plaza.x, z - ZONES.plaza.z) - ZONES.plaza.r;
   for (const [a, b, c, e] of PATHS) d = Math.min(d, sdSeg(x, z, a, b, c, e) - PATH_W);
-  return d;
+  for (const k of STATIONS) d = Math.min(d, Math.hypot(x - ZONES[k].x, z - ZONES[k].z) - ZONES[k].r);
+  return Math.min(d, Math.hypot(x - ZONES.portfolio.x, z - ZONES.portfolio.z) - ZONES.portfolio.r);
 };
 
 export function zoneAt(x, z) {
   if (Math.hypot(x - ZONES.plaza.x, z - ZONES.plaza.z) < ZONES.plaza.r + 0.5) return 'plaza';
+  if (Math.hypot(x - ZONES.portfolio.x, z - ZONES.portfolio.z) < ZONES.portfolio.r + 1) return 'portfolio';
+  for (const k of STATIONS) if (Math.hypot(x - ZONES[k].x, z - ZONES[k].z) < ZONES[k].r + 0.8) return k;
   if (inRect(x, z, ZONES.library, 1)) return 'library';
   if (pondDist(x, z) < 0.35) return 'pond';
   if (inRect(x, z, ZONES.farm, 1) || inBox(x, z, ZONES.barn, 3) || Math.hypot(x - ZONES.windmill.x, z - ZONES.windmill.z) < 5) return 'farm';
@@ -76,7 +97,7 @@ export function zoneAt(x, z) {
 function occupied(x, z, m = 0) {
   return pathDist(x, z) < m || inRect(x, z, ZONES.library, m + 0.5) || pondDist(x, z) < 0.15 + m / 5 || inRect(x, z, ZONES.farm, m + 1.2) ||
     inBox(x, z, ZONES.barn, m + 2.5) || inBox(x, z, ZONES.cottage, m + 2.5) || Math.hypot(x - ZONES.campfire.x, z - ZONES.campfire.z) < 4.5 + m ||
-    Math.hypot(x - ZONES.windmill.x, z - ZONES.windmill.z) < 3.5 + m || Math.hypot(x, z) > WORLD_R;
+    Math.hypot(x - ZONES.windmill.x, z - ZONES.windmill.z) < 3.5 + m || (Math.abs(z - ZONES.gallery.z) < 1.5 + m && Math.abs(x) < 11) || Math.hypot(x, z) > WORLD_R;
 }
 
 const f = (n) => n.toFixed(2);
@@ -97,6 +118,8 @@ void main(){
   ${PATHS.map(([a, b, cc, e]) => `d = min(d, sdSeg(p, vec2(${f(a)}, ${f(b)}), vec2(${f(cc)}, ${f(e)})) - ${f(PATH_W)});`).join('\n  ')}
   float lib = sdBox(p - vec2(${f((ZONES.library.x0 + ZONES.library.x1) / 2)}, ${f((ZONES.library.z0 + ZONES.library.z1) / 2)}), vec2(${f((ZONES.library.x1 - ZONES.library.x0) / 2)}, ${f((ZONES.library.z1 - ZONES.library.z0) / 2)}));
   d = min(d, lib);
+  d = min(d, length(p - vec2(${f(ZONES.portfolio.x)}, ${f(ZONES.portfolio.z)})) - ${f(ZONES.portfolio.r)});
+  ${STATIONS.map((k) => `d = min(d, length(p - vec2(${f(ZONES[k].x)}, ${f(ZONES[k].z)})) - ${f(ZONES[k].r)});`).join('\n  ')}
   float pathMask = 1. - smoothstep(-0.05, 0.12, d + wob);
   // stepping-stone texture on paths
   vec2 cell = fract(p * 0.9) - 0.5;
@@ -113,7 +136,7 @@ void main(){
   float cl = noise(p * 0.045 + vec2(uTime * 0.025, uTime * 0.012)) * 0.7 + noise(p * 0.1 - uTime * 0.02) * 0.3;
   c *= 1. - 0.13 * smoothstep(0.5, 0.72, cl);
   c += (hash(floor(p * 28.)) - 0.5) * 0.018;
-  c = mix(c, uFog, smoothstep(0.62, 1.0, length(p) / 52.));
+  c = mix(c, uFog, smoothstep(0.7, 1.0, length(p) / 82.));
   gl_FragColor = vec4(c, 1.);
   #include <colorspace_fragment>
 }`;
@@ -122,7 +145,7 @@ const GROUND_VERT = `varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(p
 const WATER_VERT = `varying vec2 vL; varying vec3 vW;
 void main(){ vL = position.xy; vec4 w = modelMatrix * vec4(position, 1.); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const WATER_FRAG = `
-uniform float uTime, uWade; uniform vec3 uDeep, uShallow, uFoam, uPlayer; varying vec2 vL; varying vec3 vW;
+uniform float uTime, uWade, uRain; uniform vec3 uDeep, uShallow, uFoam, uPlayer; varying vec2 vL; varying vec3 vW;
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
   return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y); }
@@ -137,6 +160,11 @@ void main(){
   float pd = length(vW.xz - uPlayer.xz);
   float ring = smoothstep(0.06, 0.0, abs(fract(pd * 1.2 - uTime * 1.4) - 0.5) - 0.42) * smoothstep(2.5, 0.3, pd) * uWade;
   c = mix(c, uFoam, ring * 0.6);
+  // raindrop rings
+  vec2 g = vW.xz * 1.6; vec2 id = floor(g); vec2 fc = fract(g) - 0.5;
+  float hr = hash(id); float rt = fract(uTime * 0.9 + hr);
+  float drop = smoothstep(0.06, 0.0, abs(length(fc - (vec2(hash(id + 3.1), hash(id + 7.7)) - 0.5) * 0.4) - rt * 0.42)) * (1. - rt) * step(0.35, hr);
+  c = mix(c, uFoam, drop * uRain * 0.7);
   gl_FragColor = vec4(c, 0.93);
   #include <colorspace_fragment>
 }`;
@@ -299,12 +327,12 @@ export class Scenery {
       vertexShader: GRASS_VERT, fragmentShader: GRASS_FRAG, side: THREE.DoubleSide,
       uniforms: { uTime: timeUniform, uPlayer: { value: new THREE.Vector3() }, uBase: { value: new THREE.Color() }, uTip: { value: new THREE.Color() } },
     });
-    const N = 16000;
+    const N = 24000;
     const grass = new THREE.InstancedMesh(blade, this.grassMat, N);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
     let n = 0, guard = 0;
     while (n < N && guard++ < 50000) {
-      const a = rnd() * Math.PI * 2, r = Math.sqrt(rnd()) * 36;
+      const a = rnd() * Math.PI * 2, r = Math.sqrt(rnd()) * 54;
       const cx = Math.cos(a) * r, cz = Math.sin(a) * r;
       if (occupied(cx, cz, 0.6)) continue;
       const tuft = 14 + Math.floor(rnd() * 20);
@@ -327,7 +355,7 @@ export class Scenery {
     const P = ZONES.pond;
     this.waterMat = new THREE.ShaderMaterial({
       vertexShader: WATER_VERT, fragmentShader: WATER_FRAG, transparent: true,
-      uniforms: { uTime: timeUniform, uWade: { value: 0 }, uPlayer: { value: new THREE.Vector3() },
+      uniforms: { uTime: timeUniform, uWade: { value: 0 }, uRain: { value: 0 }, uPlayer: { value: new THREE.Vector3() },
         uDeep: { value: new THREE.Color() }, uShallow: { value: new THREE.Color() }, uFoam: { value: new THREE.Color() } },
     });
     const water = new THREE.Mesh(new THREE.CircleGeometry(1, 64), this.waterMat);
@@ -672,13 +700,13 @@ export class Scenery {
     const FALL = ['tree_oak_fall', 'tree_default_fall', 'tree_detailed_fall', 'tree_fat_fall'];
     const placed = [];
     const far = (x, z, d) => placed.every(([px, pz]) => (px - x) ** 2 + (pz - z) ** 2 > d * d);
-    for (let i = 0; i < 4000 && placed.length < 230; i++) {
-      const a = rnd() * Math.PI * 2, r = 8 + Math.sqrt(rnd()) * 38;
+    for (let i = 0; i < 9000 && placed.length < 340; i++) {
+      const a = rnd() * Math.PI * 2, r = 8 + Math.sqrt(rnd()) * 54;
       const x = Math.cos(a) * r, z = Math.sin(a) * r;
       const dense = r > 27;
       if (!dense && rnd() > 0.18) continue;
       if (!tryPlace(x, z, 1.8) && r < WORLD_R) continue;
-      if (r > 47 || !far(x, z, dense ? 2.4 : 3.2)) continue;
+      if (r > 62 || !far(x, z, dense ? 2.4 : 3.2) || pathDist(x, z) < 1.8) continue;
       placed.push([x, z]);
       const name = rnd() < 0.12 ? FALL[Math.floor(rnd() * FALL.length)] : TREES[Math.floor(rnd() * TREES.length)];
       const s = 2.6 + rnd() * 1.4;
@@ -798,7 +826,7 @@ export class Scenery {
     this.w.staticBox(CF.x + 3.6, 1, CF.z + 3.4, 1.4, 1, 1.4);
 
     // lantern posts + potted plants around the reading grove
-    for (const z of [-5, -11, -17, -23]) for (const x of [-11.6, 11.6]) {
+    for (const z of [-5, -11, -17]) for (const x of [-11.6, 11.6]) {
       B.add(N('pot_large'), x, z, { s: 2.5 });
       B.add(N('plant_bushSmall'), x, z, { s: 2.2, y: 0.55 });
     }
@@ -808,21 +836,35 @@ export class Scenery {
   }
 
   // ---------- runtime ----------
-  setTheme(dark) {
-    const P = PALETTES[dark ? 'dark' : 'light'];
+  /** Apply time of day + weather (see environment.js). Returns the fog/background colour. */
+  setEnv(env) {
+    const P = resolvePalette(PALETTES, env);
     const u = this.groundMat.uniforms;
-    u.uGrass.value.set(P.grass); u.uGrass2.value.set(P.grass2); u.uPath.value.set(P.path);
-    u.uSoil.value.set(P.soil); u.uSand.value.set(P.sand); u.uFog.value.set(P.fog);
-    this.grassMat.uniforms.uBase.value.set(dark ? '#183530' : '#5f8f44');
-    this.grassMat.uniforms.uTip.value.set(dark ? '#3e7a62' : '#c7dd7c');
-    this.waterMat.uniforms.uDeep.value.set(P.deep);
-    this.waterMat.uniforms.uShallow.value.set(P.shallow);
-    this.waterMat.uniforms.uFoam.value.set(P.foam);
+    for (const [uk, k] of [['uGrass', 'grass'], ['uGrass2', 'grass2'], ['uPath', 'path'], ['uSoil', 'soil'], ['uSand', 'sand'], ['uFog', 'fog']]) u[uk].value.copy(P[k]);
+    this.grassMat.uniforms.uBase.value.copy(P.blade);
+    this.grassMat.uniforms.uTip.value.copy(P.bladeTip);
+    this.waterMat.uniforms.uDeep.value.copy(P.deep);
+    this.waterMat.uniforms.uShallow.value.copy(P.shallow);
+    this.waterMat.uniforms.uFoam.value.copy(P.foam);
+    this.waterMat.uniforms.uRain.value = env.rain;
     for (const m of this.glows) m.emissiveIntensity = P.window;
     for (const { light, key } of this.lights) light.userData.base = light.intensity = P[key];
-    for (const m of this.smokeMats || []) m.color.set(P.smoke);
-    this.butterflies.visible = !dark;
+    for (const m of this.smokeMats || []) m.color.copy(P.smoke);
+    this.butterflies.visible = env.day > 0.5 && env.rain < 0.5 && env.snow < 0.5;
     return P.fog;
+  }
+
+  /** Autumn tints the canopy, winter dusts it with snow. */
+  setSeason(season) {
+    const tints = {
+      autumn: { leafsGreen: ['#ee9a3c', 0.62], leafsDark: ['#d7743a', 0.4], grass: ['#cdb95e', 0.2] },
+      winter: { leafsGreen: ['#e4ece9', 0.4], leafsDark: ['#cfdcd8', 0.3], grass: ['#e8eef0', 0.5] },
+    }[season] || {};
+    for (const [name, m] of matCache) {
+      if (!(name in NATURE_PAL)) continue;
+      m.color.set(NATURE_PAL[name]);
+      if (tints[name]) m.color.lerp(new THREE.Color(tints[name][0]), tints[name][1]);
+    }
   }
 
   update(dt, t, player, wade) {

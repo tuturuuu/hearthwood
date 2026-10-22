@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Hearthwood</title>
+  <link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
+  <link rel="apple-touch-icon" href="assets/icon.svg" />
+  <meta name="theme-color" content="#f3d3b0" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet" />
@@ -22,6 +25,25 @@
   </script>
 </head>
 <body>
+  <!-- Loading screen -->
+  <div id="loader">
+    <div class="ld-card">
+      <img src="assets/icon.svg" alt="" class="ld-icon" />
+      <h1>Hearthwood</h1>
+      <p class="ld-sub">a cozy reading village</p>
+      <div class="ld-bar"><i></i></div>
+      <p class="ld-status">Gathering the village…</p>
+      <button id="ldEnter" class="primary" hidden><i data-lucide="footprints"></i> Enter the village</button>
+      <p class="ld-tip"></p>
+    </div>
+  </div>
+
+  <!-- Touch controls (phones & tablets) -->
+  <div id="touch">
+    <div id="joy"><div id="joyKnob"></div></div>
+    <button id="jumpBtn" aria-label="Jump"><i data-lucide="arrow-big-up"></i></button>
+  </div>
+
   <!-- 3D world -->
   <div id="library"></div>
 
@@ -39,20 +61,80 @@
       <button id="btnView" class="icon-btn" title="Switch between 3D world and grid (G)"><i data-lucide="layout-grid" class="show-3d"></i><i data-lucide="box" class="show-grid"></i></button>
       <button id="btnChar" class="icon-btn" title="Change character (C)"><i data-lucide="user-round"></i></button>
       <button id="btnMusic" class="icon-btn" title="Sound on / off (M)"><i data-lucide="music-2" class="on"></i><i data-lucide="volume-x" class="off"></i></button>
-      <button class="icon-btn themeToggle" title="Day / night (T)"><i data-lucide="moon" class="to-dark"></i><i data-lucide="sun" class="to-light"></i></button>
+      <button class="icon-btn themeToggle" title="Time of day: real clock / day / night (T)"><i data-lucide="clock-3" class="t-auto"></i><i data-lucide="sun" class="t-day"></i><i data-lucide="moon" class="t-night"></i></button>
+      <button id="btnWorld" class="icon-btn" title="World, timer &amp; backup settings"><i data-lucide="sliders-horizontal"></i></button>
       <button id="btnImport" class="pill" title="Import PDFs (I)"><i data-lucide="plus"></i> Add PDFs</button>
     </div>
     <input id="fileInput" type="file" accept="application/pdf" multiple hidden />
+    <input id="backupInput" type="file" accept="application/json,.json" hidden />
   </div>
   <div id="help">
     <span><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> walk</span>
     <span><kbd>Shift</kbd> run</span>
     <span><kbd>Space</kbd> jump</span>
     <span><kbd>Enter</kbd> read</span>
+    <span><kbd>E</kbd> sit</span>
     <span><kbd>C</kbd> character</span>
+    <span><kbd>P</kbd> timer</span>
     <span><kbd>scroll</kbd> zoom</span>
   </div>
   <div id="zone"></div>
+
+  <!-- World settings panel -->
+  <div id="worldPanel" hidden>
+    <div class="wp-head"><b>Hearthwood</b><span id="wpStatus"></span><button id="wpClose" class="icon-btn"><i data-lucide="x"></i></button></div>
+    <label>Time of day</label>
+    <div class="seg" id="wpTime">
+      <button data-v="auto"><i data-lucide="clock-3"></i> Real clock</button>
+      <button data-v="day"><i data-lucide="sun"></i> Day</button>
+      <button data-v="night"><i data-lucide="moon"></i> Night</button>
+    </div>
+    <label>Weather</label>
+    <div class="seg" id="wpWeather">
+      <button data-v="auto"><i data-lucide="wand-sparkles"></i> Auto</button>
+      <button data-v="clear"><i data-lucide="cloud-sun"></i> Clear</button>
+      <button data-v="rain"><i data-lucide="cloud-rain"></i> Rain</button>
+      <button data-v="snow"><i data-lucide="snowflake"></i> Snow</button>
+      <button data-v="leaves"><i data-lucide="leaf"></i> Leaves</button>
+    </div>
+    <label>Pomodoro (minutes)</label>
+    <div class="wp-pomo">
+      <span>Focus <input id="wpFocus" type="number" min="1" max="120" /></span>
+      <span>Break <input id="wpBreak" type="number" min="1" max="60" /></span>
+      <span>Long break <input id="wpLong" type="number" min="1" max="90" /></span>
+    </div>
+    <label>Backup</label>
+    <div class="wp-backup">
+      <button id="wpExportFull"><i data-lucide="archive"></i> Full backup</button>
+      <button id="wpExportNotes"><i data-lucide="notebook-pen"></i> Notes &amp; progress</button>
+      <button id="wpImport"><i data-lucide="upload"></i> Restore…</button>
+    </div>
+    <p class="wp-note">A full backup includes your PDFs. A notes backup is tiny and merges into books you already have.</p>
+  </div>
+
+  <!-- Experience details -->
+  <div id="infoCard" hidden>
+    <div class="ic-area"></div>
+    <h3></h3>
+    <div class="ic-org"></div>
+    <ul></ul>
+    <div class="ic-tags"></div>
+    <div class="ic-actions">
+      <button id="icLinkedIn"><i data-lucide="linkedin"></i> LinkedIn</button>
+      <span style="flex:1"></span>
+      <button id="icClose" class="primary">Close</button>
+    </div>
+  </div>
+
+  <!-- Pomodoro -->
+  <div id="pomo">
+    <svg class="pomo-ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.5" class="track" /><circle cx="18" cy="18" r="15.5" class="bar" /></svg>
+    <button id="pomoMode" class="pomo-mode" title="Switch focus / break (when paused)">Focus</button>
+    <span id="pomoTime">25:00</span>
+    <button id="pomoToggle" class="icon-btn" title="Start / pause (P)"><i data-lucide="play" class="p-play"></i><i data-lucide="pause" class="p-pause"></i></button>
+    <button id="pomoReset" class="icon-btn" title="Reset"><i data-lucide="rotate-ccw"></i></button>
+    <button id="pomoSkip" class="icon-btn" title="Skip to next"><i data-lucide="skip-forward"></i></button>
+  </div>
   <div id="prompt" hidden></div>
   <div id="dropzone" hidden><div><i data-lucide="file-up"></i> Drop PDFs to shelve them</div></div>
   <div id="fade"></div>
@@ -82,7 +164,7 @@
           <button id="rMode3d" title="3D book (3)"><i data-lucide="book-open"></i></button>
         </div>
         <button id="rMusic" class="icon-btn" title="Sound on / off (M)"><i data-lucide="music-2" class="on"></i><i data-lucide="volume-x" class="off"></i></button>
-        <button class="icon-btn themeToggle" title="Day / night (T)"><i data-lucide="moon" class="to-dark"></i><i data-lucide="sun" class="to-light"></i></button>
+        <button class="icon-btn themeToggle" title="Time of day: real clock / day / night (T)"><i data-lucide="clock-3" class="t-auto"></i><i data-lucide="sun" class="t-day"></i><i data-lucide="moon" class="t-night"></i></button>
       </div>
     </header>
     <div class="r-body">
