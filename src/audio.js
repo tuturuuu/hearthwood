@@ -395,9 +395,7 @@ export class Sound {
     const gust = ctx.createGain(); gust.gain.value = 1; this.wind.g.disconnect(); this.wind.g.connect(gust); gust.connect(this.ambBus);
     this.lfo(0.07, 0.45, gust.gain);
 
-    // the campfire: a soft breathing "hush… hush" of air, no crackles
-    this.fireRoar = this.bed(this.brown, 'lowpass', 260, 0.7);
-    this.lfo(0.6, 90, this.fireRoar.f.frequency);
+    // the campfire has no steady bed: only the pops and snaps from the tick
 
     this.ambTimer = setInterval(() => this.ambientTick(), 100);
   }
@@ -413,7 +411,6 @@ export class Sound {
     this.rainHiss.g.gain.setTargetAtTime(rain * 0.2, t, 1.5);
     this.rainLow.g.gain.setTargetAtTime(rain * 0.35, t, 1.5);
     this.wind.g.gain.setTargetAtTime(snow * 0.32 + rain * 0.04, t, 2);
-    this.fireRoar.g.gain.setTargetAtTime(fire * 0.55, t, 0.6);
     if (this.timer && !this.pending) this.updateCutoff(t);
   }
 
@@ -457,6 +454,15 @@ export class Sound {
       if (a.rain > 0.7 && a.dark && r() < 0.0012) this.thunder(t);
     }
     if (a.snow > 0.3 && r() < 0.006) this.chime(t, a.snow);
+    if (a.fire > 0.05) {
+      // small pops most of the time, a sharp snap now and then
+      if (r() < a.fire * 0.7) {
+        const p = this.pan(r() * 0.8 - 0.4, this.ambBus);
+        this.noiseHit(t + r() * 0.09, 'bandpass', 1200 + r() * 3500, 1.5 + r() * 2, (0.05 + r() * 0.1) * a.fire, 0.008 + r() * 0.02, p);
+        if (r() < 0.3) this.noiseHit(t + r() * 0.09, 'bandpass', 1800 + r() * 2500, 2, 0.04 * a.fire, 0.006, p);
+      }
+      if (r() < a.fire * 0.05) this.noiseHit(t, 'highpass', 1500, 0.7, 0.22 * a.fire, 0.05, this.pan(r() * 0.6 - 0.3, this.ambBus));
+    }
     if (a.water > 0.05 && r() < 0.2) {
       const f = this.noiseHit(t, 'bandpass', 500 + r() * 400, 2, 0.05 * a.water, 0.4, this.pan(r() * 1.2 - 0.6, this.ambBus));
       f.frequency.exponentialRampToValueAtTime(900, t + 0.35);
