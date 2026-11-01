@@ -15,6 +15,11 @@ import { Life } from './life.js';
 import { Fishing } from './fishing.js';
 import { Experience } from './experience.js';
 import { buildNook } from './nook.js';
+import { QUALITY } from './perf.js';
+import { Villagers } from './npcs.js';
+import { Halloween } from './halloween.js';
+import { woodSign, wrapLines, INK } from './signs.js';
+import { WELCOME } from './profile.js';
 
 const SHELF = { W: 3.2, H: 2.3, D: 0.55, levels: [0.1, 1.17] };
 // shelf spots: two full rows, then the outer spots of a third row (the reading nook sits in the middle)
@@ -119,7 +124,14 @@ export class Library {
     this.time = 0;
 
     const r = (this.renderer = new THREE.WebGLRenderer({ antialias: true }));
-    r.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+    r.setPixelRatio(Math.min(devicePixelRatio, 1.25));
+    r.shadowMap.autoUpdate = false;              // refreshed on our own schedule (see frame)
+    this.statics = [];                           // static colliders, streamed in/out around the player
+    this.frameCount = 0;
+    this.lastActive = performance.now();
+    for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart']) {
+      addEventListener(ev, () => { this.lastActive = performance.now(); }, { passive: true });
+    }
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(r.domElement);
@@ -151,11 +163,14 @@ export class Library {
     this.buildSeats();
     buildNook(this);
     this.interactables = [];
+    this.buildWelcome();
     this.buildGallery();
     this.portfolio = new Portfolio(this);
     this.experience = new Experience(this);
     this.life = new Life(this);
     this.fishing = new Fishing(this);
+    this.villagers = new Villagers(this);
+    this.halloween = new Halloween(this);
     for (let i = 0; i < 4; i++) this.ensureShelf(i);
     this.assignMaterials();
     this.char = new Character(this.player, (m) => toon('#ffffff', { map: m.map ?? null, color: m.map ? '#ffffff' : m.color }));
@@ -165,8 +180,11 @@ export class Library {
     this.bindEvents();
     this.resize();
     this.setEnvironment({ hours: 13, day: 1, dusk: 0, rain: 0, snow: 0, leaves: 0, snowCover: 0, season: 'summer' });
+    let quality = 'auto';
+    try { quality = localStorage.getItem('quality') || 'auto'; } catch {}
+    this.setQuality(quality);
     this.camera.position.set(0, 14, 18);
-    r.setAnimationLoop(() => this.frame());
+    r.setAnimationLoop((t) => this.frame(t));
   }
 
   // ---------- environment ----------
@@ -203,6 +221,7 @@ export class Library {
       await this.char.load(name);
       this.body.visible = false;
       this.charName = name;
+      this.villagers?.matchPlayer(name);
       try { localStorage.setItem('character', name); } catch {}
     } catch (e) {
       console.warn('character failed to load, using the built-in one', e);
@@ -225,7 +244,7 @@ export class Library {
     b.position.set(x, y, z);
     b.quaternion.setFromEuler(0, rotY, 0);
     b.updateAABB();   // static bodies added after the sim starts keep a stale AABB otherwise
-    this.world.addBody(b);
+    this.addStatic(b);
     return b;
   }
 
@@ -233,7 +252,65 @@ export class Library {
     const b = new CANNON.Body({ type: CANNON.Body.STATIC, material: this.world.defaultMaterial, shape: new CANNON.Cylinder(r, r, h, 10) });
     b.position.set(x, h / 2, z);
     b.updateAABB();
+    this.addStatic(b);
+    return b;
+  }
+
+  addStatic(b) {
+    b.userData = { active: true };
+    this.statics.push(b);
     this.world.addBody(b);
+  }
+
+  /**
+   * Physics only needs static colliders near something that moves. Every few frames, keep the ones near the
+   * player (or near an awake prop) in the world and park the rest. This took physics from ~12 ms to a fraction.
+   */
+  streamStatics() {
+    const p = this.pBody.position;
+    const awake = this.props.filter(({ body }) => body.sleepState !== CANNON.Body.SLEEPING).map(({ body }) => body.position);
+    for (const b of this.statics) {
+      const r = b.boundingRadius;
+      let near = !b.userData.off && Math.hypot(b.position.x - p.x, b.position.z - p.z) < 14 + r;   // off: decoration switched off
+      if (!near && !b.userData.off) for (const q of awake) if (Math.hypot(b.position.x - q.x, b.position.z - q.z) < 5 + r) { near = true; break; }
+      if (near !== b.userData.active) {
+        b.userData.active = near;
+        near ? this.world.addBody(b) : this.world.removeBody(b);
+      }
+    }
+  }
+
+  /** 'auto' | 'high' | 'balanced' | 'battery' */
+  setQuality(mode) {
+    this.qualityMode = mode;
+    this.q = QUALITY[mode === 'auto' ? (this.autoLevel || 'balanced') : mode];
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.q.pixelRatio));
+    if (this.sun.shadow.mapSize.x !== this.q.shadowMap) {
+      this.sun.shadow.mapSize.set(this.q.shadowMap, this.q.shadowMap);
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+    }
+    this.scenery.setGrassDensity?.(this.q.grass);
+    this.resize();
+    this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  /** In auto mode, step quality down when frames are slow and back up when there is headroom. */
+  autoTune(frameMs) {
+    if (this.qualityMode !== 'auto') return;
+    // skip the warm-up (shader compiles, model loads) and one-off hitches; we want the steady cost
+    if (this.frameCount < 240 || frameMs > 50) return;
+    this.tuneT = (this.tuneT || 0) + 1;
+    this.tuneSum = (this.tuneSum || 0) + frameMs;
+    if (this.tuneT < 180) return;
+    const avg = this.tuneSum / this.tuneT;
+    this.tuneT = this.tuneSum = 0;
+    const order = ['battery', 'balanced', 'high'];
+    const i = order.indexOf(this.autoLevel || 'balanced');
+    let next = i;
+    if (avg > 12 && i > 0) next = i - 1;            // our own work is eating the frame budget
+    else if (avg < 4 && i < 2 && !this.triedHigh) { next = i + 1; this.triedHigh = true; }
+    if (next !== i) { this.autoLevel = order[next]; this.setQuality('auto'); }
   }
 
   /** A pushable physics prop shaped like a lying cylinder (hay bales). */
@@ -469,6 +546,30 @@ export class Library {
     this.marker.rotation.x = Math.PI;
     this.marker.visible = false;
     s.add(this.marker);
+  }
+
+  /** The first thing you see: a note on why this village exists. Enter opens the full letter. */
+  buildWelcome() {
+    const W = WELCOME.sign, x = -2.1, z = 4.3;
+    const sign = woodSign({
+      width: 3.0, height: 1.75, post: 0.8, lean: -0.72, twoPosts: true,
+      draw: (g, w, h) => {
+        g.textAlign = 'center';
+        g.fillStyle = '#c0573c'; g.font = '900 86px Nunito, sans-serif'; g.fillText(W.title, w / 2, 128, w - 90);
+        g.fillStyle = INK; g.font = '800 56px Nunito, sans-serif';
+        const lines = wrapLines(g, W.lines.join(' '), w - 140);    // one paragraph, so no orphan words
+        lines.forEach((l, i) => g.fillText(l, w / 2, 232 + i * 72, w - 90));
+        g.font = '800 34px Nunito, sans-serif'; g.fillStyle = '#7a5230'; g.fillText(W.hint, w / 2, h - 48);
+        // a little heart, burnt into the corner
+        g.fillStyle = '#c0573c'; g.font = '900 52px Nunito, sans-serif'; g.fillText('♥', w - 70, h - 40);
+        g.textAlign = 'left';
+      },
+    });
+    sign.position.set(x, 0, z);
+    this.scene.add(sign);
+    this.staticBox(x, 0.9, z, 1.5, 0.9, 0.2);
+    this.addInteractable({ x, z: z + 1.3, r: 2.3, title: 'A note from Việt', sub: 'Why I built Hearthwood · Enter to read',
+      action: () => this.onLetter?.() });
   }
 
   buildFireflies() {
@@ -744,6 +845,7 @@ export class Library {
         if (k.startsWith('Arrow') || k === ' ') e.preventDefault();
         return;
       }
+      if ((k === 'e' || k === 'Enter') && this.villagers.talking) { this.villagers.advance(); return; }
       if ((k === 'e' || k === 'Enter') && this.focusedSeat && !this.focused && !this.busy) { this.sit(this.focusedSeat); return; }
       if ((k === 'e' || k === 'Enter') && this.focusedThing && !this.focused && !this.busy) { this.focusedThing.action(); return; }
       if (k.startsWith('Arrow') || k === ' ') e.preventDefault();
@@ -837,19 +939,57 @@ export class Library {
     this.fireMat.uniforms.uO.value = P.fire * (1 - env.rain) * (1 - env.snow * 0.7);
     this.fireMat.uniforms.uCol.value.copy(P.fireCol);
     this.bloom.strength = P.bloom;
+    this.useBloom = P.bloom > 0.25;   // the glow only matters at night; skip the extra passes by day
     this.sign.material.color.setScalar(0.4 + 0.45 * env.day);   // keep the sign out of the bloom at night
+    // the same for every unlit text billboard (orbit chips, speech bubbles, banners): at full brightness the
+    // night bloom smears them into white blobs, so dim them just under its threshold and the lettering stays crisp
+    this.billboards ??= this.collectBillboards();
+    const k = 0.6 + 0.4 * env.day;
+    for (const m of this.billboards) m.color.copy(m.userData.baseColor).multiplyScalar(k);
     for (const { bulb, light } of this.lamps) {
       light.intensity = P.lamp;
       bulb.material.emissiveIntensity = P.bulb;
     }
   }
 
+  /** Unlit, textured materials (labels, bubbles, signs) — the ones bloom can wash out. Glows are left alone. */
+  collectBillboards() {
+    const found = new Set();
+    this.scene.traverse((o) => {
+      for (const m of [].concat(o.material ?? [])) {
+        if (!(m.isSpriteMaterial || m.isMeshBasicMaterial) || !m.map || m.blending === THREE.AdditiveBlending || m === this.sign.material) continue;
+        m.userData.baseColor ??= m.color.clone();
+        found.add(m);
+      }
+    });
+    return [...found];
+  }
+
   pause() { this.paused = true; this.keys.clear(); }
-  resume() { this.paused = false; this.clock.getDelta(); }
+  resume() { this.paused = false; this.lastT = null; }
 
   // ---------- per frame ----------
-  frame() {
-    const dt = Math.min(this.clock.getDelta(), 0.05);
+  /** frames per second we aim for right now */
+  fpsCap() {
+    if (!document.hasFocus()) return 20;                                   // in the background: barely tick
+    const q = this.q || QUALITY.balanced;
+    const active = this.keys.size || this.moving || this.tweens.length || this.busy || Math.hypot(this.stick.x, this.stick.z) > 0.1
+      || this.fishing?.state !== 'idle' || performance.now() - this.lastActive < 4000;
+    return active ? q.fps : Math.min(q.fps, 30);                           // idle: half rate, it's a calm scene anyway
+  }
+
+  frame(t = performance.now()) {
+    const now = performance.now();
+    // Frame cap aligned to the display: draw every k-th refresh so frames stay evenly spaced
+    // (60fps cap on 144Hz → every 2nd refresh = 72fps, instead of an uneven 2-3 refresh rhythm).
+    const gap = t - (this.lastTick ?? t);
+    this.lastTick = t;
+    if (gap > 2 && gap < 40) this.vsync = (this.vsync ?? gap) * 0.9 + gap * 0.1;
+    const k = Math.max(1, Math.round(1000 / this.fpsCap() / (this.vsync || 16.7) - 0.1));
+    if ((this.tick = (this.tick || 0) + 1) % k) return;
+    // rAF timestamps sit on vsync, so dt is steady (performance.now() inside the callback wobbles)
+    const dt = Math.min(Math.max((t - (this.lastT ?? t - 16.7)) / 1000, 0.001), 0.05);
+    this.lastT = t;
     for (const tw of [...this.tweens]) {
       tw.el += dt;
       const t = Math.min(tw.el / tw.dur, 1);
@@ -862,10 +1002,13 @@ export class Library {
 
     if (!this.busy) this.controls(dt);
     else { this.moving = false; this.pBody.velocity.x *= 0.8; this.pBody.velocity.z *= 0.8; }
+    if (++this.frameCount % 6 === 0) this.streamStatics();
     this.world.step(1 / 60, dt, 3);
+    // draw bodies interpolated between fixed physics steps: at 30/48/72 fps a frame holds 1 or 2 steps,
+    // and copying the raw position made the character visibly lurch
     for (const { mesh, body } of this.props) {
-      mesh.position.copy(body.position);
-      mesh.quaternion.copy(body.quaternion);
+      mesh.position.copy(body.interpolatedPosition);
+      mesh.quaternion.copy(body.interpolatedQuaternion);
     }
     this.animatePlayer(dt);
     this.updateFocus(dt);
@@ -875,6 +1018,8 @@ export class Library {
     timeUniform.value = this.time;
     this.scenery.update(dt, this.time, pp, this.wade);
     this.life.update(dt, this.time, pp, this.seated);
+    this.villagers.update(dt, pp);
+    this.halloween.update(dt, this.time, pp, this.env);
     this.fishing.update(dt);
     this.portfolio.update(this.time);
     this.experience.update(this.time, pp);
@@ -891,11 +1036,29 @@ export class Library {
     this.sign.quaternion.copy(this.camera.quaternion);
     // sun (or moon) travels across the sky with the clock
     const arc = ((this.env.hours - 6) / 12) * Math.PI - (this.dark ? Math.PI : 0);
-    this.sun.position.set(pp.x - Math.cos(arc) * 14, 6 + Math.max(0, Math.sin(arc)) * 12, pp.z + 7);
+    const sunDir = this._sunDir ??= new THREE.Vector3();
+    sunDir.set(-Math.cos(arc) * 14, 6 + Math.max(0, Math.sin(arc)) * 12, 7);
+    // snap the shadow camera to whole shadow-map texels (in light space) so shadow edges
+    // don't crawl as it follows the player
+    const texel = 32 / this.sun.shadow.mapSize.x;
+    const fwd = this._sunFwd ??= new THREE.Vector3(), right = this._sunRight ??= new THREE.Vector3(), up = this._sunUp ??= new THREE.Vector3();
+    fwd.copy(sunDir).normalize();
+    right.set(0, 1, 0).cross(fwd).normalize();
+    up.copy(fwd).cross(right);
+    const a = Math.round(pp.dot(right) / texel) * texel, b = Math.round(pp.dot(up) / texel) * texel, c = pp.dot(fwd);
+    const center = this._sunCenter ??= new THREE.Vector3();
+    center.copy(right).multiplyScalar(a).addScaledVector(up, b).addScaledVector(fwd, c);
+    this.sun.position.copy(center).add(sunDir);
+    this.sun.target.position.copy(center);
     this.weather.update(pp, { rain: this.env.rain, snow: this.env.snow, leaves: this.env.leaves });
-    this.sun.target.position.set(pp.x, 0, pp.z);
 
-    this.composer.render();
+    const q = this.q || QUALITY.balanced;
+    // while walking, the player's own shadow has to keep up every frame or it stutters behind them;
+    // standing still, nothing near the camera moves much, so the throttled schedule is invisible
+    if (this.moving || this.frameCount % q.shadowEvery === 0) this.renderer.shadowMap.needsUpdate = true;
+    if (this.useBloom && q.bloom) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
+    this.autoTune(performance.now() - now);
   }
 
   jump() {
@@ -934,7 +1097,7 @@ export class Library {
   }
 
   animatePlayer(dt) {
-    const b = this.pBody.position;
+    const b = this.pBody.interpolatedPosition;
     if (this.seated) {
       const s = this.seated;
       this.facing = lerpAngle(this.facing, s.face, Math.min(1, dt * 8));

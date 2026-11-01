@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { toon, canvasTexture, addWind } from './toon.js';
 import { woodSign, wrapLines, paintPlanks, INK } from './signs.js';
+import { mergeStatic } from './perf.js';
 import { ZONES, PATHS } from './scenery.js';
 import { EXPERIENCE } from './profile.js';
 
@@ -113,9 +114,12 @@ export class Experience {
     this.key = key;
     decorate(root, Z);
     const gaps = this.gapsFor(Z);
-    this.fence(root, Z, gaps);
-    this.farmProps(root, Z, gaps);
+    const decor = new THREE.Group();          // fence + farm props never move: bake them into a few meshes
+    root.add(decor);
+    this.fence(decor, Z, gaps);
+    this.farmProps(decor, Z, gaps);
     shadowed(root);
+    mergeStatic(decor);
     disc.castShadow = false;
   }
 

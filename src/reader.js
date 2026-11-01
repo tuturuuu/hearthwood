@@ -18,13 +18,15 @@ export class Reader {
     this.tab = 'contents';
     this.fit = true;
     this.scale = 1.2;
-    this.mode3d = false;
+    this.view = 'scroll';        // 'scroll' (vertical), 'paged' (flip sideways) or '3d'
+    this.last2d = 'scroll';
     this.pages = [];
     this.visible = new Set();
     this.bind();
   }
 
   get isOpen() { return !this.el.hidden; }
+  get mode3d() { return this.view === '3d'; }
 
   // ---------- open / close ----------
   async open(book, { cozy = false } = {}) {
@@ -49,10 +51,11 @@ export class Reader {
     if (innerWidth < 760) $('sidebar').classList.add('closed');
     book.lastOpened = Date.now();
 
+    const view = book.view ?? (book.mode3d ? '3d' : 'scroll');
+    await this.setMode(view, true);          // layout first: the page scale depends on it
     this.buildPages();
     this.loadOutline().then(() => this.renderSidebar());
-    if (book.mode3d) await this.setMode(true);
-    else { this.setMode(false, true); this.scrollToPage(this.pageNum); }
+    if (view !== '3d') this.scrollToPage(this.pageNum);
     this.updatePageUI();
     this.renderSidebar();
   }
@@ -64,7 +67,7 @@ export class Reader {
     this.io?.disconnect();
     this.thumbIO?.disconnect();
     if (this.view3d) { this.view3d.dispose(); this.view3d = null; }
-    this.mode3d = false;
+    this.cancelFlip();
     $('pages').replaceChildren();
     this.pages = [];
     this.visible.clear();
@@ -81,13 +84,18 @@ export class Reader {
     if (!this.book) return;
     this.book.lastPage = this.pageNum;
     this.book.zoom = this.fit ? null : this.scale;
-    this.book.mode3d = this.mode3d;
+    this.book.view = this.view;
+    this.book.mode3d = this.mode3d;      // older backups only know this flag
     await db.putBook(this.book);
   }
 
   // ---------- continuous pages ----------
   computeScale() {
     if (!this.fit) return this.scale;
+    if (this.view === 'paged') {           // the whole page on screen
+      const w = this.wrap.clientWidth - 48, h = this.wrap.clientHeight - 64;
+      return Math.max(0.3, Math.min(w / this.base.width, h / this.base.height, 2.5));
+    }
     const avail = this.wrap.clientWidth - 64;
     return Math.max(0.3, Math.min(avail / this.base.width, 2.5));
   }
@@ -100,6 +108,7 @@ export class Reader {
     this.visible.clear();
     this.scale = this.computeScale();
     this.io = new IntersectionObserver((entries) => {
+      if (this.view === 'paged') return;     // paged mode picks its own pages (see layoutPaged)
       for (const e of entries) {
         const p = this.pages[+e.target.dataset.page - 1];
         if (e.isIntersecting) { this.visible.add(p); this.renderPage(p); }
@@ -167,6 +176,13 @@ export class Reader {
   }
 
   setScale(next) {
+    if (this.view === 'paged') {
+      this.scale = next;
+      for (const p of this.pages) this.sizePage(p);
+      for (const p of this.visible) this.renderPage(p);
+      this.save();
+      return;
+    }
     const anchor = this.pageNum;
     const pEl = this.pages[anchor - 1]?.el;
     const frac = pEl ? (this.wrap.scrollTop - pEl.offsetTop) / pEl.offsetHeight : 0;
@@ -181,7 +197,9 @@ export class Reader {
   zoom(f) {
     if (this.mode3d) return;
     this.fit = false;
-    this.setScale(Math.min(5, Math.max(0.3, this.scale * f)));
+    // paged: zoom up to the window's width at most, so a turning page stays on screen (tall pages scroll down)
+    const max = this.view === 'paged' ? (this.wrap.clientWidth - 24) / this.base.width : 5;
+    this.setScale(Math.min(max, Math.max(0.3, this.scale * f)));
   }
 
   fitWidth() { this.fit = true; this.setScale(this.computeScale()); }
@@ -189,6 +207,14 @@ export class Reader {
   scrollToPage(n) {
     const p = this.pages[n - 1];
     if (!p) return;
+    if (this.view === 'paged') {
+      this.cancelFlip();
+      this.pageNum = n;
+      this.layoutPaged();
+      this.wrap.scrollTop = 0;
+      this.updatePageUI();
+      return;
+    }
     this.wrap.scrollTop = p.el.offsetTop - 16;
     this.pageNum = n;
     this.updatePageUI();
@@ -196,6 +222,7 @@ export class Reader {
 
   onScroll() {
     if (this.mode3d || !this.pages.length) return;
+    if (this.view === 'paged') return;     // vertical scrolling there only pans a zoomed-in page
     const mid = this.wrap.scrollTop + this.wrap.clientHeight * 0.35;
     // binary search on offsetTop
     let lo = 0, hi = this.pages.length - 1;
@@ -229,8 +256,95 @@ export class Reader {
       const before = this.pageNum;
       this.pageNum = await this.view3d.flip(dir, () => sound.sfx('flip'));
       if (before !== this.pageNum) { this.updatePageUI(); this.save(); }
+    } else if (this.view === 'paged') {
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) {   // no swinging paper: just change page
+        const n = this.pageNum + dir;
+        if (n >= 1 && n <= this.pdf.numPages) { this.scrollToPage(n); this.save(); }
+        return;
+      }
+      const f = this.startFlip(dir);
+      if (f) this.animateFlip(f, dir > 0 ? 1 : 0, 640);
     } else this.go(this.pageNum + dir);
   }
+
+  // ---------- paged mode: one sheet at a time, turned like paper ----------
+  // Pages sit stacked in one spot. Turning forward lifts the current sheet by its right edge and swings it
+  // over the spine on its left; turning back lays the previous sheet down on top again.
+
+  /** Show the current page and keep its neighbours rendered, so a turn never reveals a blank sheet. */
+  layoutPaged(extra = []) {
+    const keep = new Set([this.pageNum - 1, this.pageNum, this.pageNum + 1, ...extra]);
+    for (const p of this.pages) {
+      p.el.classList.toggle('cur', p.n === this.pageNum);
+      const near = keep.has(p.n);
+      if (near && !this.visible.has(p)) { this.visible.add(p); this.renderPage(p); }
+      else if (!near && this.visible.has(p)) { this.visible.delete(p); this.releasePage(p); }
+    }
+  }
+
+  startFlip(dir) {
+    this.finishFlip();                                   // a new turn completes the one in progress
+    const target = this.pageNum + dir;
+    if (target < 1 || target > this.pdf.numPages) return null;
+    const sheet = this.pages[(dir > 0 ? this.pageNum : target) - 1];   // the sheet that moves
+    const under = this.pages[(dir > 0 ? target : this.pageNum) - 1];   // the page it uncovers (or covers)
+    this.layoutPaged([target - 1, target + 1]);
+    sheet.el.classList.add('turning');
+    under.el.classList.add('under');
+    this.wrap.classList.add('turning');      // the swinging sheet would otherwise spill scrollbars
+    this.hideSelBar();
+    getSelection()?.removeAllRanges();
+    const f = { dir, target, sheet, under, t: 0 };
+    this.flipping = f;
+    this.setTurn(f, dir > 0 ? 0 : 1);
+    sound.sfx('flip');
+    return f;
+  }
+
+  /** t: how far the moving sheet has turned, 0 = lying flat on the right, 1 = turned over to the left. */
+  setTurn(f, t) {
+    f.t = t;
+    f.sheet.el.style.transform = `rotateY(${-180 * t}deg)`;
+    f.sheet.el.style.setProperty('--t', t.toFixed(3));
+    f.under.el.style.setProperty('--t', t.toFixed(3));
+  }
+
+  /** Ease the sheet to `to`; landing on the far side commits the turn, landing back cancels it. */
+  animateFlip(f, to, ms) {
+    cancelAnimationFrame(f.raf);
+    const from = f.t, start = performance.now();
+    const dur = Math.max(120, ms * Math.abs(to - from));
+    const ease = (x) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);   // paper picks up speed, then settles
+    const tick = (now) => {
+      const k = Math.min(1, (now - start) / dur);
+      this.setTurn(f, from + (to - from) * ease(k));
+      if (k < 1) f.raf = requestAnimationFrame(tick);
+      else this.endFlip(f, to === (f.dir > 0 ? 1 : 0));
+    };
+    f.raf = requestAnimationFrame(tick);
+  }
+
+  endFlip(f, done) {
+    if (this.flipping !== f) return;
+    cancelAnimationFrame(f.raf);
+    this.flipping = null;
+    this.wrap.classList.remove('turning');
+    for (const el of [f.sheet.el, f.under.el]) {
+      el.classList.remove('turning', 'under');
+      el.style.transform = '';
+      el.style.removeProperty('--t');
+    }
+    if (done) {
+      this.pageNum = f.target;
+      this.wrap.scrollTop = 0;
+      this.updatePageUI();
+      this.save();
+    }
+    this.layoutPaged();
+  }
+
+  finishFlip() { if (this.flipping) this.endFlip(this.flipping, true); }
+  cancelFlip() { if (this.flipping) this.endFlip(this.flipping, false); }
 
   updatePageUI() {
     if (!this.pdf) return;
@@ -239,6 +353,8 @@ export class Reader {
     $('rTotal').textContent = this.mode3d && n + 1 <= total ? `–${n + 1} / ${total}` : `/ ${total}`;
     $('rBookmark').classList.toggle('on', this.book.bookmarks.some((b) => b.page === n));
     $('progress').firstElementChild.style.width = `${(n / total) * 100}%`;
+    $('rFlipPrev').disabled = n <= 1;
+    $('rFlipNext').disabled = n >= total;
     this.markCurrentToc();
   }
 
@@ -552,14 +668,22 @@ export class Reader {
   }
 
   // ---------- modes ----------
-  async setMode(three, initial = false) {
-    this.mode3d = three;
-    $('rModeScroll').classList.toggle('on', !three);
+  async setMode(view, initial = false) {
+    if (view !== '3d') this.last2d = view;
+    this.view = view;
+    const three = view === '3d';
+    $('rModeScroll').classList.toggle('on', view === 'scroll');
+    $('rModePaged').classList.toggle('on', view === 'paged');
     $('rMode3d').classList.toggle('on', three);
     $('zoomGroup').style.visibility = three ? 'hidden' : '';
+    $('rFit').title = view === 'paged' ? 'Fit page' : 'Fit width';
+    this.wrap.classList.toggle('paged', view === 'paged');
+    $('rMain').classList.toggle('paged', view === 'paged');
     this.wrap.hidden = three;
     $('view3d').hidden = !three;
+    this.cancelFlip();
     this.hideSelBar();
+    if (view !== 'paged') this.pages.forEach((p) => p.el.classList.remove('cur'));
     if (three) {
       if (!this.view3d) {
         const pdf = this.pdf;
@@ -575,7 +699,13 @@ export class Reader {
       this.view3d?.dispose();
       this.view3d = null;
       if (!initial) {
+        if (view === 'paged' && this.scale * this.base.width > this.wrap.clientWidth - 24) this.fit = true;  // too wide to flip
         if (this.fit) this.setScale(this.computeScale());
+        else for (const p of this.pages) this.sizePage(p);
+        if (view === 'scroll' && this.io) {            // let the observer pick the visible pages again
+          this.io.disconnect();
+          this.pages.forEach((p) => this.io.observe(p.el));
+        }
         this.scrollToPage(this.pageNum);
       }
     }
@@ -584,6 +714,62 @@ export class Reader {
   }
 
   setTheme(dark) { this.view3d?.setDark(dark); }
+
+  /** Grab a page and turn it by hand: swipe anywhere on touch; with a mouse, drag it by its outer edge
+   *  (the middle of the page stays free for selecting text). */
+  bindPageDrag() {
+    const w = this.wrap;
+    let drag = null;
+    const edge = (e) => {
+      const r = this.pages[this.pageNum - 1]?.el.getBoundingClientRect();
+      if (!r) return null;
+      const x = (e.clientX - r.left) / r.width;
+      return x > 0.86 && x < 1.08 ? 1 : x < 0.14 && x > -0.08 ? -1 : null;
+    };
+    w.addEventListener('pointerdown', (e) => {
+      if (this.view !== 'paged' || e.button !== 0 || !this.pdf) return;
+      const touch = e.pointerType !== 'mouse';
+      const dir = touch ? 0 : edge(e);
+      if (dir === null) return;
+      if (!touch) e.preventDefault();                  // no text selection while grabbing the edge
+      drag = { x0: e.clientX, y0: e.clientY, dir, id: e.pointerId, f: null, w: this.pages[this.pageNum - 1].el.offsetWidth, last: [] };
+    });
+    w.addEventListener('pointermove', (e) => {
+      if (this.view !== 'paged') return;
+      if (!drag) { if (e.pointerType === 'mouse' && !e.buttons) w.style.cursor = edge(e) ? 'grab' : ''; return; }
+      if (e.pointerId !== drag.id) return;
+      const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+      if (!drag.f) {
+        if (Math.abs(dx) < 8) return;
+        if (Math.abs(dy) > Math.abs(dx)) { drag = null; return; }      // a vertical swipe: let it scroll
+        drag.f = this.startFlip(drag.dir || (dx < 0 ? 1 : -1));
+        if (!drag.f) { drag = null; return; }
+        try { w.setPointerCapture(e.pointerId); } catch {}   // keep the sheet even if the pointer leaves the page
+        w.style.cursor = 'grabbing';
+      }
+      const f = drag.f, t = f.dir > 0 ? -dx / (drag.w * 1.1) : 1 - dx / (drag.w * 1.1);
+      this.setTurn(f, Math.min(1, Math.max(0, t)));
+      drag.last.push([performance.now(), e.clientX]);
+      if (drag.last.length > 5) drag.last.shift();
+    });
+    const release = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const { f, last } = drag;
+      drag = null;
+      w.style.cursor = '';
+      if (!f || this.flipping !== f) return;
+      // finish the turn if the sheet is past a third of the way, or was flicked in that direction
+      const recent = last.filter(([t]) => performance.now() - t < 100);   // a finger that paused isn't flicking
+      const [t0, x0] = recent[0] || [0, 0], [t1, x1] = recent.at(-1) || [1, 0];
+      const v = recent.length > 1 ? (x1 - x0) / Math.max(1, t1 - t0) : 0;   // px per ms, negative = towards the left
+      const progress = f.dir > 0 ? f.t : 1 - f.t;
+      const flick = f.dir > 0 ? v < -0.4 : v > 0.4;
+      const done = e.type === 'pointerup' && (progress > 0.33 || flick);
+      this.animateFlip(f, done === (f.dir > 0) ? 1 : 0, 560);
+    };
+    w.addEventListener('pointerup', release);
+    w.addEventListener('pointercancel', release);
+  }
 
   // ---------- events ----------
   bind() {
@@ -596,8 +782,16 @@ export class Reader {
     $('rFit').onclick = () => this.fitWidth();
     $('rBookmark').onclick = () => this.toggleBookmark();
     $('rAddNote').onclick = () => this.pageNote();
-    $('rModeScroll').onclick = () => this.mode3d && this.setMode(false);
-    $('rMode3d').onclick = () => !this.mode3d && this.setMode(true);
+    $('rModeScroll').onclick = () => this.view !== 'scroll' && this.setMode('scroll');
+    $('rModePaged').onclick = () => this.view !== 'paged' && this.setMode('paged');
+    $('rMode3d').onclick = () => !this.mode3d && this.setMode('3d');
+    $('rFlipPrev').onclick = () => this.step(-1);
+    $('rFlipNext').onclick = () => this.step(1);
+    // paged mode: refit the page whenever the reading area changes size (window, sidebar)
+    new ResizeObserver(() => {
+      if (this.isOpen && this.view === 'paged' && this.pages.length && this.fit) this.setScale(this.computeScale());
+    }).observe(this.wrap);
+    this.bindPageDrag();
     $('rSidebarBtn').onclick = () => {
       $('sidebar').classList.toggle('closed');
       if (this.fit && !this.mode3d) this.setScale(this.computeScale());
@@ -637,7 +831,19 @@ export class Reader {
       requestAnimationFrame(() => { ticking = false; this.onScroll(); });
     });
     this.wrap.addEventListener('wheel', (e) => {
-      if (e.ctrlKey) { e.preventDefault(); this.zoom(e.deltaY < 0 ? 1.08 : 1 / 1.08); }
+      if (e.ctrlKey) { e.preventDefault(); this.zoom(e.deltaY < 0 ? 1.08 : 1 / 1.08); return; }
+      if (this.view !== 'paged') return;
+      // a mouse wheel flips pages; sideways trackpad swipes and zoomed-in tall pages scroll natively
+      const tall = this.wrap.scrollHeight > this.wrap.clientHeight + 2;
+      if (tall || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      if (performance.now() < (this.wheelLock || 0)) return;
+      this.wheelAcc = (this.wheelAcc || 0) + e.deltaY;
+      if (Math.abs(this.wheelAcc) > 40) {
+        this.step(Math.sign(this.wheelAcc));
+        this.wheelAcc = 0;
+        this.wheelLock = performance.now() + 380;
+      }
     }, { passive: false });
     $('view3d').addEventListener('click', (e) => {
       const r = e.currentTarget.getBoundingClientRect();
@@ -647,14 +853,15 @@ export class Reader {
     let resizeT;
     addEventListener('resize', () => {
       clearTimeout(resizeT);
-      resizeT = setTimeout(() => { if (this.isOpen && !this.mode3d && this.fit) this.setScale(this.computeScale()); }, 150);
+      resizeT = setTimeout(() => { if (this.isOpen && this.view === 'scroll' && this.fit) this.setScale(this.computeScale()); }, 150);
     });
 
     addEventListener('keydown', (e) => {
       if (!this.isOpen || modalOpen() || e.target.matches?.('input, textarea')) return;
       const k = e.key;
-      if (k === 'ArrowRight' || k === 'PageDown' || (k === ' ' && this.mode3d)) { e.preventDefault(); this.step(1); }
-      else if (k === 'ArrowLeft' || k === 'PageUp') { e.preventDefault(); this.step(-1); }
+      const flipsDown = this.view === 'paged' && this.wrap.scrollHeight <= this.wrap.clientHeight + 2;   // whole page visible
+      if (k === 'ArrowRight' || k === 'PageDown' || (k === ' ' && this.view !== 'scroll') || (k === 'ArrowDown' && flipsDown)) { e.preventDefault(); this.step(1); }
+      else if (k === 'ArrowLeft' || k === 'PageUp' || (k === 'ArrowUp' && flipsDown)) { e.preventDefault(); this.step(-1); }
       else if (k === 'Home') this.go(1);
       else if (k === 'End') this.go(this.pdf.numPages);
       else if (k === 'Escape') { if (!$('selBar').hidden) this.hideSelBar(); else this.close(); }
@@ -662,7 +869,9 @@ export class Reader {
       else if (k === 'n') { e.preventDefault(); this.pageNote(); }
       else if (k === 's') $('rSidebarBtn').click();
       else if (k === 'c') { this.tab = 'contents'; this.openSidebar(); this.renderSidebar(); }
-      else if (k === '3') this.setMode(!this.mode3d);
+      else if (k === '1') this.view !== 'scroll' && this.setMode('scroll');
+      else if (k === '2') this.view !== 'paged' && this.setMode('paged');
+      else if (k === '3') this.setMode(this.mode3d ? this.last2d : '3d');
       else if (k === '+' || k === '=') this.zoom(1.15);
       else if (k === '-') this.zoom(1 / 1.15);
     });

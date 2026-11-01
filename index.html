@@ -97,6 +97,19 @@
       <button data-v="snow"><i data-lucide="snowflake"></i> Snow</button>
       <button data-v="leaves"><i data-lucide="leaf"></i> Leaves</button>
     </div>
+    <label>Graphics</label>
+    <div class="seg" id="wpQuality">
+      <button data-v="auto"><i data-lucide="gauge"></i> Auto</button>
+      <button data-v="high"><i data-lucide="sparkles"></i> High</button>
+      <button data-v="balanced"><i data-lucide="scale"></i> Balanced</button>
+      <button data-v="battery"><i data-lucide="battery"></i> Battery saver</button>
+    </div>
+    <label>Halloween</label>
+    <div class="seg" id="wpHalloween">
+      <button data-v="auto"><i data-lucide="calendar"></i> Auto</button>
+      <button data-v="on"><i data-lucide="ghost"></i> On</button>
+      <button data-v="off"><i data-lucide="circle-off"></i> Off</button>
+    </div>
     <label>Pomodoro (minutes)</label>
     <div class="wp-pomo">
       <span>Focus <input id="wpFocus" type="number" min="1" max="120" /></span>
@@ -110,6 +123,14 @@
       <button id="wpImport"><i data-lucide="upload"></i> Restore…</button>
     </div>
     <p class="wp-note">A full backup includes your PDFs. A notes backup is tiny and merges into books you already have.</p>
+  </div>
+
+  <!-- Welcome letter (opened from the sign by the spawn point) -->
+  <div id="letter" hidden>
+    <h3></h3>
+    <div class="lt-body"></div>
+    <div class="lt-sign"></div>
+    <div class="lt-actions"><button id="ltClose" class="primary">Look around</button></div>
   </div>
 
   <!-- Experience details -->
@@ -136,6 +157,11 @@
     <button id="pomoSkip" class="icon-btn" title="Skip to next"><i data-lucide="skip-forward"></i></button>
   </div>
   <div id="prompt" hidden></div>
+  <div id="dialogue" hidden>
+    <div class="dl-tag"><span class="dl-name"></span><span class="dl-role"></span></div>
+    <div class="dl-text"></div>
+    <span class="dl-more"></span>
+  </div>
   <div id="dropzone" hidden><div><i data-lucide="file-up"></i> Drop PDFs to shelve them</div></div>
   <div id="fade"></div>
 
@@ -160,7 +186,8 @@
         <button id="rBookmark" class="icon-btn" title="Bookmark page (B)"><i data-lucide="bookmark"></i></button>
         <button id="rAddNote" class="icon-btn" title="Note on this page (N)"><i data-lucide="sticky-note"></i></button>
         <div class="seg">
-          <button id="rModeScroll" title="Scroll view"><i data-lucide="scroll-text"></i></button>
+          <button id="rModeScroll" title="Scroll vertically (1)"><i data-lucide="scroll-text"></i></button>
+          <button id="rModePaged" title="Flip pages sideways (2)"><i data-lucide="gallery-horizontal"></i></button>
           <button id="rMode3d" title="3D book (3)"><i data-lucide="book-open"></i></button>
         </div>
         <button id="rMusic" class="icon-btn" title="Sound on / off (M)"><i data-lucide="music-2" class="on"></i><i data-lucide="volume-x" class="off"></i></button>
@@ -180,6 +207,8 @@
       </aside>
       <main id="rMain">
         <div id="pageWrap"><div id="pages"></div></div>
+        <button id="rFlipPrev" class="flip-btn prev" title="Previous page (←)"><i data-lucide="chevron-left"></i></button>
+        <button id="rFlipNext" class="flip-btn next" title="Next page (→)"><i data-lucide="chevron-right"></i></button>
         <div id="view3d" hidden></div>
         <div id="progress"><i></i></div>
       </main>

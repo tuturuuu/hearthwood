@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { toon, addWind, canvasTexture, seeded, timeUniform } from './toon.js';
 import { palette, resolvePalette } from './environment.js';
+import { mergeStatic } from './perf.js';
 
 /*  Hearthwood — a cozy forest clearing.
  *
@@ -216,6 +217,8 @@ function materialFor(src) {
 const PASSABLE = /flower|grass|plant_flat|lily|mushroom|crop|campfire_logs|tree_|plant_bushSmall/;
 
 /** Collects placements per model and builds one InstancedMesh per sub-mesh (+ physics colliders). */
+const TILE = 16;   // world units per culling tile
+
 class Batch {
   constructor(world) { this.w = world; this.items = new Map(); }
   add(path, x, z, { s = 3, ry = 0, y = 0, shadow = true } = {}) {
@@ -242,14 +245,23 @@ class Batch {
       let root;
       try { root = await loadModel(path); } catch (e) { console.warn('missing model', path); return; }
       this.addColliders(path, root, spots);
+      // one instanced mesh per map tile, so tiles outside the camera view are skipped entirely
+      const tiles = new Map();
+      spots.forEach(({ x, z }, i) => {
+        const key = `${Math.floor(x / TILE)},${Math.floor(z / TILE)}`;
+        if (!tiles.has(key)) tiles.set(key, []);
+        tiles.get(key).push(list[i]);
+      });
       root.traverse((m) => {
         if (!m.isMesh) return;
-        const im = new THREE.InstancedMesh(m.geometry, materialFor(m.material), list.length);
-        list.forEach((mx, i) => im.setMatrixAt(i, mx.clone().multiply(m.matrixWorld)));
-        im.castShadow = shadow;
-        im.receiveShadow = true;
-        im.computeBoundingSphere();
-        parent.add(im);
+        for (const mats of tiles.values()) {
+          const im = new THREE.InstancedMesh(m.geometry, materialFor(m.material), mats.length);
+          mats.forEach((mx, i) => im.setMatrixAt(i, mx.clone().multiply(m.matrixWorld)));
+          im.castShadow = shadow;
+          im.receiveShadow = true;
+          im.computeBoundingSphere();
+          parent.add(im);
+        }
       });
     }));
   }
@@ -328,7 +340,7 @@ export class Scenery {
       uniforms: { uTime: timeUniform, uPlayer: { value: new THREE.Vector3() }, uBase: { value: new THREE.Color() }, uTip: { value: new THREE.Color() } },
     });
     const N = 24000;
-    const grass = new THREE.InstancedMesh(blade, this.grassMat, N);
+    const tiles = new Map();
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
     let n = 0, guard = 0;
     while (n < N && guard++ < 50000) {
@@ -342,12 +354,26 @@ export class Scenery {
         v.set(x, 0, z);
         e.set((rnd() - 0.5) * 0.3, rnd() * Math.PI, (rnd() - 0.5) * 0.3);
         sc.set(1, 0.6 + rnd() * 0.9, 1);
-        grass.setMatrixAt(n++, m4.compose(v, q.setFromEuler(e), sc));
+        const key = `${Math.floor(x / 12)},${Math.floor(z / 12)}`;
+        if (!tiles.has(key)) tiles.set(key, []);
+        tiles.get(key).push(m4.compose(v, q.setFromEuler(e), sc).clone());
+        n++;
       }
     }
-    grass.count = n;
-    grass.frustumCulled = false;
-    this.group.add(grass);
+    // one instanced mesh per 12×12 tile so the GPU skips everything outside the view
+    this.grassTiles = [...tiles.values()].map((mats) => {
+      const mesh = new THREE.InstancedMesh(blade, this.grassMat, mats.length);
+      mats.forEach((mx, i) => mesh.setMatrixAt(i, mx));
+      mesh.computeBoundingSphere();
+      mesh.boundingSphere.radius += 1;      // room for the wind sway
+      this.group.add(mesh);
+      return { mesh, full: mats.length };
+    });
+  }
+
+  /** 0..1 share of grass blades to draw (quality setting) */
+  setGrassDensity(f) {
+    for (const t of this.grassTiles || []) t.mesh.count = Math.max(1, Math.round(t.full * f));
   }
 
   // ---------- pond ----------
@@ -453,6 +479,7 @@ export class Scenery {
     g.position.set(C.x, 0, C.z);
     this.group.add(g);
     this.w.staticBox(C.x, 1.5, C.z, C.w / 2 + 0.1, 1.5, C.d / 2 + 0.1);
+    mergeStatic(g);
     this.smoke(new THREE.Vector3(C.x + 1.7, 4.9, C.z - 0.7), 0.9);
 
     // mailbox + garden bench
@@ -482,6 +509,7 @@ export class Scenery {
     g.position.set(B.x, 0, B.z);
     g.rotation.y = -Math.PI / 2;
     this.group.add(g);
+    mergeStatic(g);
     this.w.staticBox(B.x, 1.5, B.z, B.w / 2 + 0.1, 1.5, B.d / 2 + 0.1);
 
     // pushable hay bales
@@ -576,6 +604,7 @@ export class Scenery {
     g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
     g.position.set(0, 0, -2.6);
     this.group.add(g);
+    mergeStatic(g);
     this.w.staticBox(-2.2, 1.5, -2.6, 0.2, 1.5, 0.2);
     this.w.staticBox(2.2, 1.5, -2.6, 0.2, 1.5, 0.2);
   }
@@ -596,6 +625,7 @@ export class Scenery {
     }
     g.position.set(3.4, 0, -1.2);
     this.group.add(g);
+    mergeStatic(g);
     this.w.staticCylinder(3.4, -1.2, 0.15, 2.6);
   }
 

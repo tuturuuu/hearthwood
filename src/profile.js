@@ -77,3 +77,21 @@ export const SKILLS = [
   { group: 'Data', color: '#4d908e', items: ['SQL', 'Data pipelines', 'Fraud detection', 'Machine learning'] },
   { group: 'Web & apps', color: '#5b8fb9', items: ['React', 'Redux', 'Vue', 'three.js', 'FastAPI', 'Socket.IO', 'Streamlit', 'Solidity', 'Java'] },
 ];
+
+// The note on the welcome sign by the spawn point (see Library.buildWelcome). Written by Việt; edit freely.
+export const WELCOME = {
+  sign: {
+    title: 'Welcome to Hearthwood',
+    lines: ['Hi, I’m Việt. This village is my portfolio,', 'and the quiet, safe place I always wanted.'],
+    hint: 'press Enter to read why I built it',
+  },
+  title: 'Why I built Hearthwood',
+  paragraphs: [
+    'Hi, I’m Việt. Thanks for stopping by.',
+    'On paper, this is my portfolio. My projects, my work experience and the things I’ve learned are all here, scattered around the village. Wander around and you’ll find them.',
+    'But honestly, it’s more than that. Hearthwood is a dream I’ve carried for a long time: a small, safe place of my own. Somewhere to read a good book, sit by the fire, watch the ducks, and just breathe.',
+    'Life can be harsh, and most of the internet is loud and in a hurry. I wanted one little corner of it to be calm. So I built it.',
+    'I might keep adding to it, or I might leave it just as it is. Either way, you’re welcome here. Stay as long as you like.',
+  ],
+  signature: 'Việt',
+};

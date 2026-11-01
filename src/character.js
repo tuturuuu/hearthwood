@@ -12,6 +12,8 @@ const ONCE = new Set(['jumpStart', 'land', 'interact', 'spawn']);
 const HEIGHT = 1.85;
 
 const loader = new GLTFLoader();
+// villagers stream in after the world is up, so they don't hold the loading screen
+const quietLoader = new GLTFLoader(new THREE.LoadingManager());
 // GLTFLoader strips characters like '.' from node names ('handslot.r' → 'handslotr')
 const findNode = (root, name) => root.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(name));
 let clipsPromise, bookPromise;
@@ -36,8 +38,9 @@ export class Character {
     this.hipsHeight = 0.9;
   }
 
-  async load(name) {
-    const [gltf, clips, book] = await Promise.all([loader.loadAsync(`${BASE}${name}.glb`), loadClips(), loadBook().catch(() => null)]);
+  async load(name, { book: withBook = true, quiet = false } = {}) {
+    const [gltf, clips, book] = await Promise.all([(quiet ? quietLoader : loader).loadAsync(`${BASE}${name}.glb`), loadClips(),
+      withBook ? loadBook().catch(() => null) : null]);
     const model = gltf.scene;
     model.traverse((o) => {
       if (!o.isMesh) return;
@@ -72,7 +75,7 @@ export class Character {
       this.actions[key] = a;
     }
     this.state = null;
-    this.play('spawn', 0);
+    this.play(quiet ? 'idle' : 'spawn', 0);
     this.bones = Object.fromEntries(['hips', 'spine', 'upperleg.l', 'upperleg.r', 'lowerleg.l', 'lowerleg.r', 'upperarm.l', 'upperarm.r', 'lowerarm.l', 'lowerarm.r']
       .map((n) => [n, findNode(model, n)]));
     this.root.updateMatrixWorld(true);

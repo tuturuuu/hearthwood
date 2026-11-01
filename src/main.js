@@ -9,7 +9,7 @@ import { toast, refreshIcons, icon } from './ui.js';
 import { environmentFor, TIME_MODES, WEATHER_MODES } from './environment.js';
 import { Pomodoro, MODE_LABELS, fmt } from './pomodoro.js';
 import { exportBackup, importBackup } from './backup.js';
-import { PROFILE } from './profile.js';
+import { PROFILE, WELCOME } from './profile.js';
 
 const $ = (id) => document.getElementById(id);
 const root = document.documentElement;
@@ -167,6 +167,22 @@ library.onInfo = (e) => {
   sound.sfx('pop');
 };
 $('icClose').onclick = () => { $('infoCard').hidden = true; };
+
+library.onLetter = () => {
+  const el = $('letter');
+  if (!el.hidden) return closeLetter();                      // Enter at the sign opens and closes it
+  el.querySelector('h3').textContent = WELCOME.title;
+  el.querySelector('.lt-body').replaceChildren(...WELCOME.paragraphs.map((t) => Object.assign(document.createElement('p'), { textContent: t })));
+  el.querySelector('.lt-sign').textContent = `— ${WELCOME.signature}`;
+  el.hidden = false;
+  $('prompt').hidden = true;
+  sound.sfx('flip');
+};
+function closeLetter() {
+  $('letter').hidden = true;
+  if (library.focusedThing) library.onThingFocus(library.focusedThing);   // bring the sign's prompt back
+}
+$('ltClose').onclick = () => { closeLetter(); $('ltClose').blur(); };   // blur: Enter must reach the world again
 $('icLinkedIn').onclick = () => window.open(PROFILE.links.linkedin, '_blank', 'noopener');
 
 library.onFishMessage = (msg, rare) => {
@@ -367,7 +383,7 @@ $('pomoMode').onclick = () => { if (!pomo.running) pomo.cycleMode(); };
 
 // ---------- world settings panel ----------
 function syncPanel() {
-  for (const [id, val] of [['wpTime', timeMode], ['wpWeather', weatherMode]]) {
+  for (const [id, val] of [['wpTime', timeMode], ['wpWeather', weatherMode], ['wpQuality', library.qualityMode], ['wpHalloween', library.halloween.mode]]) {
     $(id).querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === val));
   }
   const hh = Math.floor(env.hours), mm = Math.round((env.hours % 1) * 60);
@@ -393,6 +409,25 @@ $('wpWeather').onclick = (e) => {
   if (!v) return;
   weatherMode = v; store.set('weather', v); updateEnvironment(); sound.sfx('click');
 };
+$('wpQuality').onclick = (e) => {
+  const v = e.target.closest('button')?.dataset.v;
+  if (!v) return;
+  store.set('quality', v);
+  library.setQuality(v);
+  syncPanel();
+  sound.sfx('click');
+  toast(v === 'battery' ? 'Battery saver: 30 fps, lighter grass, no glow' : `Graphics: ${v}`);
+};
+$('wpHalloween').onclick = (e) => {
+  const v = e.target.closest('button')?.dataset.v;
+  if (!v) return;
+  store.set('halloween', v);
+  library.halloween.setMode(v);
+  syncPanel();
+  sound.sfx('click');
+  toast(library.halloween.active ? 'Happy Halloween! Pumpkins glow after dark' : 'Halloween decorations off');
+};
+library.halloween.setMode(store.get('halloween') || 'auto');
 for (const [id, key] of [['wpFocus', 'focus'], ['wpBreak', 'break'], ['wpLong', 'long']]) {
   $(id).onchange = (e) => pomo.setSettings({ [key]: Math.max(1, Math.min(180, Math.round(+e.target.value) || 1)) });
 }
@@ -462,6 +497,8 @@ addEventListener('keydown', (e) => {
   if (e.target.matches?.('input, textarea') || !$('modal').hidden) return;
   if (e.key === 'Escape') {
     if (picking) { closePicker(); return; }
+    if (!$('letter').hidden) { closeLetter(); return; }
+    if (library.villagers.talking) { library.villagers.close(); return; }
     if (!$('infoCard').hidden) { $('infoCard').hidden = true; return; }
     if (!$('worldPanel').hidden) { $('worldPanel').hidden = true; return; }
   }

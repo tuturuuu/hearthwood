@@ -237,7 +237,7 @@ export class Sound {
   }
 
   // ---------- sfx ----------
-  sfx(name) {
+  sfx(name, pitch = 1) {
     if (!this.ctx || !this.musicOn) return;
     const ctx = this.ctx, t = ctx.currentTime;
     if (name === 'flip') {
@@ -297,6 +297,17 @@ export class Sound {
       o.connect(g); g.connect(this.sfxBus);
       g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + d + 0.05);
       o.start(t); o.stop(t + d + 0.06);
+    } else if (name === 'talk') {
+      // a little murmured "voice" per syllable, Animal Crossing style; each villager has their own pitch.
+      // A square wave through a soft band-pass reads like a vowel and stays audible on laptop speakers.
+      const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+      const hz = 480 * pitch * (0.88 + Math.random() * 0.3);
+      o.type = 'square';
+      o.frequency.setValueAtTime(hz, t); o.frequency.exponentialRampToValueAtTime(hz * 1.18, t + 0.05);
+      f.type = 'bandpass'; f.frequency.value = 1300 + 500 * pitch; f.Q.value = 1.1;
+      o.connect(f); f.connect(g); g.connect(this.sfxBus);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.3, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.075);
+      o.start(t); o.stop(t + 0.085);
     }
   }
 }

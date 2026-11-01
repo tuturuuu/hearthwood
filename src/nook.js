@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { toon, addWind, canvasTexture } from './toon.js';
+import { mergeStatic } from './perf.js';
 
 // A rustic reading corner at the back of the Reading Grove: a vine-covered pergola with string lights,
 // a picnic blanket, hay bales you can sit on, a crate table, a wheelbarrow of books and an apple tree.
@@ -157,5 +158,7 @@ export function buildNook(w) {
   for (let i = 0; i < 4; i++) box(0.55, 0.1, 0.4, toon(bookColors[(i + 2) % 6]), 2.05, 0.08 + i * 0.1, -1.55, g).rotation.y = (i % 3) * 0.25 - 0.2;
 
   g.traverse((o) => { if (o.isMesh && o !== blanket) { o.castShadow = true; o.receiveShadow = true; } });
+  blanket.castShadow = false;
+  mergeStatic(g);              // nothing here moves, so ~150 little meshes become a handful
   return g;
 }
