@@ -60,4 +60,4 @@ select text to highlight · click a highlight to edit/add a note · Ctrl+scroll 
 ## Credits
 Characters & spellbook: **KayKit Adventurers 2.0** by Kay Lousberg (CC0) — `assets/kaykit/License.txt`
 Nature & farm props: **Kenney Nature Kit** and **Kenney Survival Kit** (CC0) — `assets/nature`, `assets/survival`
-Campfire sound: **Hubs Sound Pack** by Mozilla Hubs / Hubs Foundation (CC-BY 2.0), trimmed and filtered — `assets/audio/License.txt`
+Fire and rain sounds: **Dragon Studio** and **gingerleegalaxy_1** on Pixabay (Pixabay Content License) — `assets/audio/License.txt`

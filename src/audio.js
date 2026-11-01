@@ -39,6 +39,8 @@ export const TRACKS = {
     ],
   },
 };
+// loudness of the recorded loops at full strength (rain = 1, standing at the fire)
+const RAIN_LEVEL = 1.6, FIRE_LEVEL = 2;
 export const TRACK_MODES = { auto: 'Auto', hearth: 'Hearth', rain: 'Rainy window', snow: 'First snow' };
 
 export class Sound {
@@ -383,11 +385,9 @@ export class Sound {
     this.ambVerb = ctx.createConvolver(); this.ambVerb.buffer = this.impulse(2.2);
     const av = ctx.createGain(); av.gain.value = 0.25; this.ambVerb.connect(av); av.connect(this.ambBus);
 
-    // rain: a soft pink hiss that breathes, a low rumble under it, droplets in the tick
-    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 280;
-    this.rainHiss = this.bed(this.pink, 'lowpass', 2200, 0.4, [hp]);
-    this.lfo(0.09, 500, this.rainHiss.f.frequency);
-    this.rainLow = this.bed(this.brown, 'lowpass', 380, 0.5);
+    // rain and the campfire are real recordings (assets/audio), looped and faded by the world
+    this.rainGain = ctx.createGain(); this.rainGain.gain.value = 0; this.rainGain.connect(this.ambBus);
+    this.loadLoop('assets/audio/rain.mp3', this.rainGain);
 
     // wind for snowy days: band-passed noise whose pitch and strength drift in slow gusts
     this.wind = this.bed(this.pink, 'bandpass', 480, 1.4);
@@ -395,9 +395,8 @@ export class Sound {
     const gust = ctx.createGain(); gust.gain.value = 1; this.wind.g.disconnect(); this.wind.g.connect(gust); gust.connect(this.ambBus);
     this.lfo(0.07, 0.45, gust.gain);
 
-    // the campfire: a real recording (assets/audio/campfire.mp3), looped, faded by distance
     this.fireGain = ctx.createGain(); this.fireGain.gain.value = 0; this.fireGain.connect(this.ambBus);
-    this.loadLoop('assets/audio/campfire.mp3', this.fireGain);
+    this.loadLoop('assets/audio/fire.mp3', this.fireGain);
 
     this.ambTimer = setInterval(() => this.ambientTick(), 100);
   }
@@ -410,10 +409,9 @@ export class Sound {
     if (!this.ctx) return;
     if (!this.ambTimer) this.startAmbience();
     const t = this.ctx.currentTime;
-    this.rainHiss.g.gain.setTargetAtTime(rain * 0.2, t, 1.5);
-    this.rainLow.g.gain.setTargetAtTime(rain * 0.35, t, 1.5);
-    this.wind.g.gain.setTargetAtTime(snow * 0.32 + rain * 0.04, t, 2);
-    this.fireGain.gain.setTargetAtTime(fire * 2, t, 0.5);
+    this.rainGain.gain.setTargetAtTime(rain * RAIN_LEVEL, t, 1.5);
+    this.wind.g.gain.setTargetAtTime(snow * 0.32, t, 2);
+    this.fireGain.gain.setTargetAtTime(fire * FIRE_LEVEL, t, 0.5);
     if (this.timer && !this.pending) this.updateCutoff(t);
   }
 
@@ -456,16 +454,7 @@ export class Sound {
       o.start(t); o.stop(t + 0.12);
     }
     if (a.dark && calm && r() < 0.0025) this.owl(t);
-    if (a.rain > 0.05) {
-      // droplets: tiny ticks on leaves, and now and then a fat drip off the eaves
-      const n = Math.round(a.rain * (2 + r() * 3));
-      for (let i = 0; i < n; i++) {
-        const s = t + r() * 0.1;
-        this.noiseHit(s, 'bandpass', 2500 + r() * 4000, 3, 0.02 + r() * 0.03, 0.015, this.pan(r() * 2 - 1, this.ambBus));
-      }
-      if (r() < a.rain * 0.08) this.drip(t + r() * 0.1, 0.05 * a.rain);
-      if (a.rain > 0.7 && a.dark && r() < 0.0012) this.thunder(t);
-    }
+    if (a.rain > 0.7 && a.dark && r() < 0.0012) this.thunder(t);
     if (a.snow > 0.3 && r() < 0.006) this.chime(t, a.snow);
     if (a.water > 0.05 && r() < 0.2) {
       const f = this.noiseHit(t, 'bandpass', 500 + r() * 400, 2, 0.05 * a.water, 0.4, this.pan(r() * 1.2 - 0.6, this.ambBus));

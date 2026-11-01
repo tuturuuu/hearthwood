@@ -1,5 +1,6 @@
-campfire.mp3
-  From "Nighttime_Campfire_Campfire" in the Hubs Sound Pack by Mozilla Hubs / Hubs Foundation
-  https://github.com/Hubs-Foundation/hubs-sound-pack
-  License: CC-BY 2.0 — https://creativecommons.org/licenses/by/2.0/
-  Changes: trimmed to a 36-second seamless loop, low rumble filtered out, steady background noise reduced, loudness normalised.
+fire.mp3  – from "fire sounds" by Dragon Studio (Pixabay, file 405444)
+rain.mp3  – from "ASMR pink noise: rain, fire, waterfall mix" by gingerleegalaxy_1 (Pixabay, file 229779)
+
+Both are used under the Pixabay Content License (https://pixabay.com/service/license-summary/),
+which allows free use without attribution; credited here anyway. Changes: trimmed, loudness
+normalised and crossfaded into seamless loops.
