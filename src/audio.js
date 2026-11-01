@@ -395,7 +395,10 @@ export class Sound {
     const gust = ctx.createGain(); gust.gain.value = 1; this.wind.g.disconnect(); this.wind.g.connect(gust); gust.connect(this.ambBus);
     this.lfo(0.07, 0.45, gust.gain);
 
-    // the campfire has no steady bed: only the pops and snaps from the tick
+    // the campfire: no steady bed (no roar, no hiss), only crackle texture played in slices from fireTick
+    this.fireGain = ctx.createGain(); this.fireGain.gain.value = 0; this.fireGain.connect(this.ambBus);
+    const fv = ctx.createGain(); fv.gain.value = 0.35; this.fireGain.connect(fv); fv.connect(this.ambVerb);
+    this.crackles = [0, 1, 2].map(() => this.crackleBuffer(7));
 
     this.ambTimer = setInterval(() => this.ambientTick(), 100);
   }
@@ -411,7 +414,67 @@ export class Sound {
     this.rainHiss.g.gain.setTargetAtTime(rain * 0.2, t, 1.5);
     this.rainLow.g.gain.setTargetAtTime(rain * 0.35, t, 1.5);
     this.wind.g.gain.setTargetAtTime(snow * 0.32 + rain * 0.04, t, 2);
+    this.fireGain.gain.setTargetAtTime(fire * 0.45, t, 0.5);
     if (this.timer && !this.pending) this.updateCutoff(t);
+  }
+
+  /**
+   * A few seconds of campfire, built from discrete events only, so there is no hiss or roar:
+   * tiny crackles all the time, brighter pops with a short wooden ring, the odd loud snap
+   * followed by a flurry, and short bursts of fine clicks where sap sizzles.
+   */
+  crackleBuffer(sec) {
+    const sr = this.ctx.sampleRate, n = Math.floor(sr * sec), d = new Float32Array(n), r = Math.random;
+    const click = (i, amp, len) => {
+      len = Math.max(2, Math.floor(len * sr));
+      for (let k = 0; k < len && i + k < n; k++) d[i + k] += amp * (r() * 2 - 1) * Math.exp(-k / (len / 4));
+    };
+    const ring = (i, amp, f, decay) => {
+      const len = Math.floor(decay * sr * 5), w = (2 * Math.PI * f) / sr, ph = r() * 6.28;
+      for (let k = 0; k < len && i + k < n; k++) d[i + k] += amp * Math.sin(ph + w * k) * Math.exp(-k / (decay * sr));
+    };
+    const events = (rate, fn) => { for (let t = -Math.log(r()) / rate; t < sec; t += -Math.log(r()) / rate) fn(Math.floor(t * sr), t); };
+    // tiny crackles: mostly faint, now and then a stronger one
+    events(28, (i) => click(i, 0.05 + 0.3 * r() ** 3, 0.0005 + r() * 0.0015));
+    // pops: a click with a short resonant ring
+    events(2.2, (i) => { const a = 0.25 + 0.5 * r() ** 2; click(i, a, 0.001); ring(i, a * 0.6, 900 + r() * 2200, 0.002 + r() * 0.008); });
+    // snaps: loud, lower-pitched, then a quick flurry of small clicks
+    events(0.22, (i) => {
+      click(i, 0.9, 0.002); ring(i, 0.5, 350 + r() * 350, 0.012 + r() * 0.01);
+      const m = 3 + Math.floor(r() * 6);
+      for (let j = 0; j < m; j++) click(i + Math.floor(r() * 0.12 * sr), 0.1 + r() * 0.3, 0.0005 + r() * 0.001);
+    });
+    // sizzle: a short swell of very fine, quiet clicks
+    events(0.4, (i0) => {
+      const dur = 0.25 + r() * 0.75, rate = 120 + r() * 180;
+      for (let t = -Math.log(r()) / rate; t < dur; t += -Math.log(r()) / rate) {
+        const x = t / dur, env = Math.sin(Math.PI * x);
+        click(i0 + Math.floor(t * sr), (0.02 + 0.07 * r()) * env, 0.0003 + r() * 0.0007);
+      }
+    });
+    // remove rumble, soften harsh top, normalise
+    let hp = 0, lp = 0, prev = 0, peak = 0;
+    const ah = Math.exp((-2 * Math.PI * 350) / sr), al = 1 - Math.exp((-2 * Math.PI * 7000) / sr);
+    for (let i = 0; i < n; i++) { hp = ah * (hp + d[i] - prev); prev = d[i]; lp += al * (hp - lp); d[i] = lp; peak = Math.max(peak, Math.abs(lp)); }
+    const b = this.ctx.createBuffer(1, n, sr), out = b.getChannelData(0);
+    for (let i = 0; i < n; i++) out[i] = (d[i] / peak) * 0.9;
+    return b;
+  }
+
+  /** Keep slices of crackle texture queued back to back, each from a random spot and slightly panned. */
+  fireTick() {
+    const ctx = this.ctx, now = ctx.currentTime;
+    if (!this.fireNext || this.fireNext < now) this.fireNext = now + 0.05;
+    while (this.fireNext < now + 0.3) {
+      const buf = this.crackles[Math.floor(Math.random() * this.crackles.length)];
+      const len = 1.2 + Math.random() * 1.6, off = Math.random() * (buf.duration - len), t = this.fireNext;
+      const src = ctx.createBufferSource(), g = ctx.createGain();
+      src.buffer = buf; src.connect(g); g.connect(this.pan(Math.random() * 0.6 - 0.3, this.fireGain));
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(1, t + 0.03);
+      g.gain.setValueAtTime(1, t + len - 0.03); g.gain.linearRampToValueAtTime(0, t + len);
+      src.start(t, off); src.stop(t + len + 0.01);
+      this.fireNext = t + len - 0.03;
+    }
   }
 
   ambientTick() {
@@ -454,15 +517,8 @@ export class Sound {
       if (a.rain > 0.7 && a.dark && r() < 0.0012) this.thunder(t);
     }
     if (a.snow > 0.3 && r() < 0.006) this.chime(t, a.snow);
-    if (a.fire > 0.05) {
-      // small pops most of the time, a sharp snap now and then
-      if (r() < a.fire * 0.7) {
-        const p = this.pan(r() * 0.8 - 0.4, this.ambBus);
-        this.noiseHit(t + r() * 0.09, 'bandpass', 1200 + r() * 3500, 1.5 + r() * 2, (0.05 + r() * 0.1) * a.fire, 0.008 + r() * 0.02, p);
-        if (r() < 0.3) this.noiseHit(t + r() * 0.09, 'bandpass', 1800 + r() * 2500, 2, 0.04 * a.fire, 0.006, p);
-      }
-      if (r() < a.fire * 0.05) this.noiseHit(t, 'highpass', 1500, 0.7, 0.22 * a.fire, 0.05, this.pan(r() * 0.6 - 0.3, this.ambBus));
-    }
+    if (a.fire > 0.05) this.fireTick();
+    else this.fireNext = 0;
     if (a.water > 0.05 && r() < 0.2) {
       const f = this.noiseHit(t, 'bandpass', 500 + r() * 400, 2, 0.05 * a.water, 0.4, this.pan(r() * 1.2 - 0.6, this.ambBus));
       f.frequency.exponentialRampToValueAtTime(900, t + 0.35);
