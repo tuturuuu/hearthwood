@@ -1,6 +1,7 @@
 import { DefaultLoadingManager } from 'three';
 import { db } from './db.js';
 import { describePdf } from './pdf.js';
+import { describeEpub, isEpub } from './epub.js';
 import { Library } from './world.js';
 import { ZONE_NAMES } from './scenery.js';
 import { Reader } from './reader.js';
@@ -46,10 +47,24 @@ document.querySelectorAll('.themeToggle').forEach((b) => (b.onclick = cycleTime)
 // ---------- music ----------
 function syncMusicUI() {
   for (const id of ['btnMusic', 'rMusic']) $(id).classList.toggle('music-off', !sound.musicOn);
+  for (const [id, on] of [['wpMusic', sound.musicOn], ['wpSfx', sound.sfxOn]]) {
+    $(id).querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === (on ? 'on' : 'off')));
+  }
 }
 function toggleMusic() { sound.setMusic(!sound.musicOn); syncMusicUI(); }
 $('btnMusic').onclick = toggleMusic;
 $('rMusic').onclick = toggleMusic;
+$('wpMusic').onclick = (e) => {
+  const v = e.target.closest('button')?.dataset.v;
+  if (v && (v === 'on') !== sound.musicOn) toggleMusic();
+};
+$('wpSfx').onclick = (e) => {
+  const v = e.target.closest('button')?.dataset.v;
+  if (!v) return;
+  sound.setEffects(v === 'on');
+  syncMusicUI();
+  sound.sfx('click');
+};
 syncMusicUI();
 // browsers only allow audio after a user gesture
 const unlock = () => { sound.ensure(); sound.startMusic(); removeEventListener('pointerdown', unlock); removeEventListener('keydown', unlock); };
@@ -203,7 +218,7 @@ async function showSeatedPrompt(seat) {
   p.querySelector('.t').textContent = seat.name;
   const fish = library.fishing.stats;
   const fishLine = seat.fishing && fish.total ? ` · 🎣 ${fish.total} caught, ${fish.kinds} kinds` : '';
-  p.querySelector('.s').textContent = (book ? `Continue “${book.title}” — page ${book.lastPage || 1}` : 'Your shelves are empty — add a PDF first') + fishLine;
+  p.querySelector('.s').textContent = (book ? `Continue “${book.title}” — page ${book.lastPage || 1}` : 'Your shelves are empty — add a PDF or EPUB first') + fishLine;
 }
 library.onSeated = (seat) => showSeatedPrompt(seat);
 library.onSeatRead = async () => {
@@ -456,8 +471,8 @@ $('backupInput').onchange = async (e) => {
 
 // ---------- import ----------
 async function importFiles(files) {
-  const pdfs = [...files].filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-  if (!pdfs.length) return toast('Only PDF files are supported');
+  const pdfs = [...files].filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name) || isEpub(f));
+  if (!pdfs.length) return toast('Only PDF and EPUB books are supported');
   const existing = await db.allBooks();
   let added = 0;
   for (const f of pdfs) {
@@ -465,7 +480,7 @@ async function importFiles(files) {
     toast(`Shelving ${f.name}…`);
     try {
       const bytes = await f.arrayBuffer();
-      const info = await describePdf(bytes, f.name);
+      const info = isEpub(f) ? await describeEpub(bytes, f.name) : await describePdf(bytes, f.name);
       const id = crypto.randomUUID();
       await db.putFile(id, bytes);
       await db.putBook({ id, ...info, fileName: f.name, size: f.size, added: Date.now(), lastPage: 1,

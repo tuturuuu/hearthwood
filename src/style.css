@@ -196,6 +196,9 @@ kbd { font: 700 11px Nunito, sans-serif; background: var(--panel); border-radius
 #wpStatus { flex: 1; color: var(--muted); font-size: 12.5px; font-weight: 700; }
 #worldPanel .seg { margin: 0; flex-wrap: wrap; }
 #worldPanel .seg button { font-size: 12.5px; padding: 6px 9px; }
+#worldPanel .wp-sound { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px 10px; }
+#worldPanel .wp-sound > span { font-weight: 700; font-size: 13.5px; }
+#worldPanel .wp-sound small { display: block; color: var(--muted); font-weight: 600; font-size: 11.5px; }
 .wp-pomo { display: flex; gap: 10px; flex-wrap: wrap; font-size: 13px; font-weight: 700; }
 .wp-pomo input { width: 54px; margin-left: 4px; text-align: center; }
 .wp-backup { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -291,6 +294,22 @@ kbd { font: 700 11px Nunito, sans-serif; background: var(--panel); border-radius
 .hl-note svg { width: 15px; height: 15px; }
 .textLayer ::selection { background: rgba(0, 110, 255, .3); }
 #view3d { position: absolute; inset: 0; cursor: pointer; }
+
+/* EPUB: a book-width column of paper; the text reflows inside it (epub.js renders into #epubPage) */
+#epubView { position: absolute; inset: 20px 0 36px; display: flex; justify-content: center; perspective: 2600px; }
+#epubPage { width: min(760px, calc(100% - 32px)); height: 100%; background: #fffdf8; border-radius: 4px; box-shadow: var(--shadow); padding: 18px 28px; box-sizing: border-box; }
+:root[data-theme="dark"] #epubPage { background: #1d1d22; }
+#reader.cozy #epubPage { background: rgba(255, 253, 248, .97); }
+/* the sheet that swings over when a page turns: its blank back, shaded near the spine */
+#epubTurn { position: absolute; top: 0; bottom: 0; left: calc(50% - min(380px, 50% - 16px)); width: min(760px, calc(100% - 32px));
+  transform-origin: left center; opacity: 0; pointer-events: none; border-radius: 4px; backface-visibility: visible;
+  background: linear-gradient(to left, rgba(0, 0, 0, .14), rgba(0, 0, 0, 0) 22%, rgba(255, 255, 255, .25) 70%, rgba(0, 0, 0, .05)), #fbf8f2;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .25); }
+:root[data-theme="dark"] #epubTurn { background: linear-gradient(to left, rgba(0, 0, 0, .3), rgba(0, 0, 0, 0) 30%), #26262c; }
+#epubTurn.fwd { animation: epubFwd .45s ease-in both; }
+#epubTurn.back { animation: epubBack .45s ease-out both; }
+@keyframes epubFwd { from { opacity: 1; transform: rotateY(-88deg); } 85% { opacity: 1; } to { opacity: 0; transform: rotateY(-178deg); } }
+@keyframes epubBack { from { opacity: 0; transform: rotateY(-178deg); } 15% { opacity: 1; } to { opacity: 1; transform: rotateY(-90deg); } }
 #view3d canvas { display: block; }
 #progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; }
 #progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }

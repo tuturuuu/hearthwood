@@ -1,5 +1,6 @@
 import { pdfjsLib, loadPdf, renderPageToCanvas } from './pdf.js';
 import { Book3DView } from './book3d.js';
+import { EpubView } from './epub.js';
 import { db } from './db.js';
 import { sound } from './audio.js';
 import { toast, editNote, modalOpen, refreshIcons, icon } from './ui.js';
@@ -27,15 +28,20 @@ export class Reader {
 
   get isOpen() { return !this.el.hidden; }
   get mode3d() { return this.view === '3d'; }
+  get isEpub() { return !!this.epub; }
+  get numPages() { return this.pdf?.numPages ?? this.epub?.total ?? 0; }
 
   // ---------- open / close ----------
   async open(book, { cozy = false } = {}) {
     const bytes = await db.getFile(book.id);
-    if (!bytes) throw new Error('PDF data missing');
+    if (!bytes) throw new Error('Book data missing');
     this.book = book;
     book.bookmarks ??= [];
     book.highlights ??= [];
     book.notes ??= [];
+    if (book.format === 'epub') return this.openEpub(book, bytes, { cozy });
+    $('rMode3d').hidden = false;
+    $('epubView').hidden = true;
     const pdf = (this.pdf = await loadPdf(bytes));
     const vp = (await pdf.getPage(1)).getViewport({ scale: 1 });
     this.base = { width: vp.width, height: vp.height };
@@ -60,10 +66,63 @@ export class Reader {
     this.renderSidebar();
   }
 
+  /** EPUBs reflow, so they render through epub.js instead of page canvases (see epub.js). */
+  async openEpub(book, bytes, { cozy }) {
+    this.pdf = null;
+    this.pageNum = Math.max(1, book.lastPage || 1);
+    this.fit = book.zoom == null;
+    this.fontScale = book.zoom || 1;
+    this.outline = null;
+    this.flatToc = [];
+    $('rTitle').textContent = book.title;
+    this.el.hidden = false;
+    this.el.classList.toggle('cozy', cozy);
+    if (innerWidth < 760) $('sidebar').classList.add('closed');
+    book.lastOpened = Date.now();
+    $('rMode3d').hidden = true;                       // the 3D book needs fixed page images
+    this.wrap.hidden = true;
+    $('view3d').hidden = true;
+    $('epubView').hidden = false;
+    $('rFit').title = 'Default text size';
+    this.epub = new EpubView($('epubPage'), {
+      onRelocated: ({ cfi, page }) => {
+        this.cfi = cfi;
+        if (performance.now() > (this.settleUntil || 0)) this.movedSinceSwitch = true;   // the reader moved on
+        if (page !== this.pageNum) { this.pageNum = page; this.save(); }
+        this.updatePageUI();
+      },
+      onSelected: (s) => { this.pending = s; this.showSelBar(s); },
+      onHighlightClick: (id) => { const h = this.book.highlights.find((x) => x.id === id); if (h) this.editHighlight(h); },
+      onPointerDown: () => this.hideSelBar(),
+      onWheel: (e) => this.epubWheel(e),
+      onSwipe: (dir) => this.step(dir),
+    });
+    const view = book.view === 'scroll' ? 'scroll' : 'paged';   // books read best page by page
+    this.setModeButtons(view);
+    await this.epub.open(bytes, { locations: book.epubLocations, flow: view, dark: document.documentElement.dataset.theme === 'dark',
+      fontScale: this.fontScale, start: book.lastCfi || undefined });
+    if (!book.lastCfi && this.pageNum > 1) await this.epub.display(this.pageNum);
+    this.epub.setHighlights(book.highlights.filter((h) => h.cfi));
+    $('rPage').max = this.numPages;
+    this.loadOutline().then(() => this.renderSidebar());
+    this.updatePageUI();
+    this.renderSidebar();
+  }
+
+  /** Mouse wheel turns pages in paged EPUBs (scrolling within a page isn't a thing there). */
+  epubWheel(e) {
+    if (this.view !== 'paged' || e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    if (performance.now() < (this.wheelLock || 0)) return;
+    this.wheelAcc = (this.wheelAcc || 0) + e.deltaY;
+    if (Math.abs(this.wheelAcc) > 40) { this.step(Math.sign(this.wheelAcc)); this.wheelAcc = 0; this.wheelLock = performance.now() + 380; }
+  }
+
   async close() {
     if (!this.isOpen) return;
     this.hideSelBar();
     await this.saveNow();
+    if (this.epub) { this.epub.destroy(); this.epub = null; $('epubView').hidden = true; this.wrap.hidden = false; }
     this.io?.disconnect();
     this.thumbIO?.disconnect();
     if (this.view3d) { this.view3d.dispose(); this.view3d = null; }
@@ -83,7 +142,8 @@ export class Reader {
     clearTimeout(this.saveT);
     if (!this.book) return;
     this.book.lastPage = this.pageNum;
-    this.book.zoom = this.fit ? null : this.scale;
+    if (this.epub) { this.book.lastCfi = this.cfi ?? this.book.lastCfi; this.book.zoom = this.fit ? null : this.fontScale; }
+    else this.book.zoom = this.fit ? null : this.scale;
     this.book.view = this.view;
     this.book.mode3d = this.mode3d;      // older backups only know this flag
     await db.putBook(this.book);
@@ -196,13 +256,22 @@ export class Reader {
 
   zoom(f) {
     if (this.mode3d) return;
+    if (this.epub) {                                   // EPUB text reflows: zoom means a bigger font
+      this.fit = false;
+      this.fontScale = Math.min(2.2, Math.max(0.7, this.fontScale * f));
+      this.epub.setFontScale(this.fontScale);
+      return this.save();
+    }
     this.fit = false;
     // paged: zoom up to the window's width at most, so a turning page stays on screen (tall pages scroll down)
     const max = this.view === 'paged' ? (this.wrap.clientWidth - 24) / this.base.width : 5;
     this.setScale(Math.min(max, Math.max(0.3, this.scale * f)));
   }
 
-  fitWidth() { this.fit = true; this.setScale(this.computeScale()); }
+  fitWidth() {
+    if (this.epub) { this.fit = true; this.fontScale = 1; this.epub.setFontScale(1); return this.save(); }
+    this.fit = true; this.setScale(this.computeScale());
+  }
 
   scrollToPage(n) {
     const p = this.pages[n - 1];
@@ -240,8 +309,9 @@ export class Reader {
 
   // ---------- navigation ----------
   async go(n) {
-    if (!this.pdf) return;
-    n = Math.min(Math.max(1, n), this.pdf.numPages);
+    if (!this.numPages) return;
+    n = Math.min(Math.max(1, n), this.numPages);
+    if (this.epub) { await this.epub.display(n); return; }
     if (this.mode3d) {
       this.pageNum = n;
       await this.view3d.show(n);
@@ -251,7 +321,14 @@ export class Reader {
     this.save();
   }
 
+  /** Jump to a precise spot (EPUB highlights, bookmarks and contents carry a CFI or chapter link). */
+  goTo(target) { if (this.epub && target) this.epub.display(target); }
+
   async step(dir) {
+    if (this.epub) {
+      if (this.view === 'paged') this.turnSheet(dir);
+      return dir > 0 ? this.epub.next() : this.epub.prev();
+    }
     if (this.mode3d) {
       const before = this.pageNum;
       this.pageNum = await this.view3d.flip(dir, () => sound.sfx('flip'));
@@ -265,6 +342,16 @@ export class Reader {
       const f = this.startFlip(dir);
       if (f) this.animateFlip(f, dir > 0 ? 1 : 0, 640);
     } else this.go(this.pageNum + dir);
+  }
+
+  /** EPUB pages can't be grabbed as images, so a blank sheet swings over as the text changes underneath. */
+  turnSheet(dir) {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const sheet = $('epubTurn');
+    sheet.classList.remove('fwd', 'back');
+    void sheet.offsetWidth;                            // restart the animation
+    sheet.classList.add(dir > 0 ? 'fwd' : 'back');
+    sound.sfx('flip');
   }
 
   // ---------- paged mode: one sheet at a time, turned like paper ----------
@@ -347,8 +434,8 @@ export class Reader {
   cancelFlip() { if (this.flipping) this.endFlip(this.flipping, false); }
 
   updatePageUI() {
-    if (!this.pdf) return;
-    const n = this.pageNum, total = this.pdf.numPages;
+    if (!this.numPages) return;
+    const n = this.pageNum, total = this.numPages;
     $('rPage').value = n;
     $('rTotal').textContent = this.mode3d && n + 1 <= total ? `–${n + 1} / ${total}` : `/ ${total}`;
     $('rBookmark').classList.toggle('on', this.book.bookmarks.some((b) => b.page === n));
@@ -410,8 +497,7 @@ export class Reader {
     };
   }
 
-  showSelBar() {
-    const s = this.readSelection();
+  showSelBar(s = this.readSelection()) {
     if (!s) return this.hideSelBar();
     this.pending = s;
     const bar = $('selBar');
@@ -428,7 +514,9 @@ export class Reader {
   async addHighlight(color, withNote) {
     const s = this.pending;
     if (!s) return;
-    const h = { id: uid(), page: s.page, text: s.text, rects: s.rects, color, note: '', created: Date.now() };
+    const h = { id: uid(), page: s.page, text: s.text, color, note: '', created: Date.now() };
+    if (s.cfi) h.cfi = s.cfi; else h.rects = s.rects;          // EPUB highlights are anchored by CFI
+    s.clear?.();
     getSelection().removeAllRanges();
     this.hideSelBar();
     if (withNote) {
@@ -438,7 +526,7 @@ export class Reader {
     }
     this.book.highlights.push(h);
     sound.sfx('pop');
-    this.drawHighlights(h.page);
+    this.paintHighlight(h);
     this.tab = withNote ? 'notes' : 'highlights';
     this.openSidebar();
     this.renderSidebar();
@@ -448,11 +536,19 @@ export class Reader {
   async editHighlight(h) {
     const r = await editNote({ title: `Highlight · page ${h.page}`, quote: h.text, text: h.note, color: h.color, canDelete: true });
     if (!r) return;
-    if (r.action === 'delete') this.book.highlights = this.book.highlights.filter((x) => x !== h);
-    else { h.note = r.text; h.color = r.color; }
-    this.drawHighlights(h.page);
+    if (r.action === 'delete') { this.book.highlights = this.book.highlights.filter((x) => x !== h); this.paintHighlight(h, true); }
+    else { h.note = r.text; h.color = r.color; this.paintHighlight(h); }
     this.renderSidebar();
     this.save();
+  }
+
+  /** Draw (or erase) one highlight in whichever renderer the book uses. */
+  paintHighlight(h, removed = false) {
+    if (this.epub) {
+      if (removed) this.epub.removeHighlight(h);
+      else if (this.epub.highlights.some((x) => x.id === h.id)) this.epub.updateHighlight(h);
+      else this.epub.addHighlight(h);
+    } else this.drawHighlights(h.page);
   }
 
   highlightAt(pageEl, clientX, clientY) {
@@ -470,7 +566,7 @@ export class Reader {
     if (i >= 0) { bm.splice(i, 1); toast('Bookmark removed'); }
     else {
       const chapter = this.currentTocItem()?.title;
-      bm.push({ id: uid(), page: this.pageNum, label: chapter ? `${chapter}` : `Page ${this.pageNum}`, created: Date.now() });
+      bm.push({ id: uid(), page: this.pageNum, label: chapter ? `${chapter}` : `Page ${this.pageNum}`, created: Date.now(), ...(this.epub && { cfi: this.cfi }) });
       bm.sort((a, b) => a.page - b.page);
       toast(`Bookmarked page ${this.pageNum}`);
       sound.sfx('pop');
@@ -487,7 +583,7 @@ export class Reader {
     if (!r) return;
     if (r.action === 'delete') this.book.notes = this.book.notes.filter((n) => n !== existing);
     else if (existing) existing.text = r.text;
-    else if (r.text) this.book.notes.push({ id: uid(), page, text: r.text, created: Date.now() });
+    else if (r.text) this.book.notes.push({ id: uid(), page, text: r.text, created: Date.now(), ...(this.epub && { cfi: this.cfi }) });
     this.tab = 'notes';
     this.openSidebar();
     this.renderSidebar();
@@ -496,6 +592,16 @@ export class Reader {
 
   // ---------- table of contents ----------
   async loadOutline() {
+    if (this.epub) {
+      const walk = (items, depth) => items.map((it) => ({ title: it.label.trim(), depth, href: it.href,
+        page: this.epub.pageOfHref(it.href), items: it.subitems?.length ? walk(it.subitems, depth + 1) : [] }));
+      this.outline = walk(this.epub.toc, 0);
+      const flat = [];
+      const flatten = (items) => items.forEach((it) => { flat.push(it); flatten(it.items); });
+      flatten(this.outline);
+      this.flatToc = flat.filter((x) => x.page);
+      return;
+    }
     const pdf = this.pdf;
     let outline = null;
     try { outline = await pdf.getOutline(); } catch {}
@@ -552,7 +658,8 @@ export class Reader {
           row.innerHTML = `<button class="tw">${it.items.length ? icon('chevron-down') : ''}</button><span class="lbl" title="${esc(it.title)}">${esc(it.title)}</span><span class="pg">${it.page ?? ''}</span>`;
           row.onclick = (e) => {
             if (e.target.closest('.tw') && it.items.length) { li.classList.toggle('collapsed'); return; }
-            if (it.page) { this.go(it.page); sound.sfx('click'); }
+            if (it.href && this.epub) { this.goTo(it.href); sound.sfx('click'); }
+            else if (it.page) { this.go(it.page); sound.sfx('click'); }
           };
           li.appendChild(row);
           if (it.items.length) li.appendChild(build(it.items));
@@ -561,6 +668,8 @@ export class Reader {
         return ul;
       };
       list.replaceChildren(build(this.outline));
+    } else if (this.epub) {
+      list.innerHTML = `<div class="empty">${icon('list-tree')}This book has no table of contents. Use the page box above to jump around.</div>`;
     } else {
       // no outline in this PDF → page thumbnails as a visual table of contents
       this.thumbIO?.disconnect();
@@ -638,7 +747,7 @@ export class Reader {
       d.innerHTML = it.html;
       d.onclick = async (e) => {
         const act = e.target.closest('[data-act]')?.dataset.act;
-        if (!act) return this.go(it.page);
+        if (!act) return it.ref.cfi && this.epub ? this.goTo(it.ref.cfi) : this.go(it.page);
         e.stopPropagation();
         if (it.kind === 'bm') {
           if (act === 'delete') b.bookmarks = b.bookmarks.filter((x) => x !== it.ref);
@@ -648,7 +757,7 @@ export class Reader {
           }
           this.updatePageUI();
         } else if (it.kind === 'hl') {
-          if (act === 'delete') { b.highlights = b.highlights.filter((x) => x !== it.ref); this.drawHighlights(it.page); }
+          if (act === 'delete') { b.highlights = b.highlights.filter((x) => x !== it.ref); this.paintHighlight(it.ref, true); }
           else return this.editHighlight(it.ref);
         } else {
           if (act === 'delete') b.notes = b.notes.filter((x) => x !== it.ref);
@@ -668,7 +777,27 @@ export class Reader {
   }
 
   // ---------- modes ----------
+  setModeButtons(view) {
+    this.view = view;
+    $('rModeScroll').classList.toggle('on', view === 'scroll');
+    $('rModePaged').classList.toggle('on', view === 'paged');
+    $('rMode3d').classList.toggle('on', view === '3d');
+  }
+
   async setMode(view, initial = false) {
+    if (this.epub) {                                   // EPUB: scroll or paged, re-flowed at the same spot
+      if (view === '3d' || view === this.view) return;
+      this.setModeButtons(view);
+      this.hideSelBar();
+      // scroll mode reports the very top edge (often the previous page's last line) as the position, so
+      // flipping modes back and forth would creep backwards; reuse the anchor unless the reader moved since
+      const anchor = this.modeAnchor && !this.movedSinceSwitch ? this.modeAnchor : this.cfi;
+      this.modeAnchor = anchor;
+      this.movedSinceSwitch = false;
+      this.settleUntil = performance.now() + 2500;
+      await this.epub.render(view, anchor);
+      return this.save();
+    }
     if (view !== '3d') this.last2d = view;
     this.view = view;
     const three = view === '3d';
@@ -713,7 +842,7 @@ export class Reader {
     if (!initial) this.save();
   }
 
-  setTheme(dark) { this.view3d?.setDark(dark); }
+  setTheme(dark) { this.view3d?.setDark(dark); this.epub?.setDark(dark); }
 
   /** Grab a page and turn it by hand: swipe anywhere on touch; with a mouse, drag it by its outer edge
    *  (the middle of the page stays free for selecting text). */
@@ -811,7 +940,7 @@ export class Reader {
     };
 
     document.addEventListener('mouseup', (e) => {
-      if (!this.isOpen || this.mode3d || $('selBar').contains(e.target) || !$('modal').hidden) return;
+      if (!this.isOpen || this.mode3d || this.epub || $('selBar').contains(e.target) || !$('modal').hidden) return;
       setTimeout(() => {
         if (this.readSelection()) return this.showSelBar();
         this.hideSelBar();
@@ -863,7 +992,7 @@ export class Reader {
       if (k === 'ArrowRight' || k === 'PageDown' || (k === ' ' && this.view !== 'scroll') || (k === 'ArrowDown' && flipsDown)) { e.preventDefault(); this.step(1); }
       else if (k === 'ArrowLeft' || k === 'PageUp' || (k === 'ArrowUp' && flipsDown)) { e.preventDefault(); this.step(-1); }
       else if (k === 'Home') this.go(1);
-      else if (k === 'End') this.go(this.pdf.numPages);
+      else if (k === 'End') this.go(this.numPages);
       else if (k === 'Escape') { if (!$('selBar').hidden) this.hideSelBar(); else this.close(); }
       else if (k === 'b') this.toggleBookmark();
       else if (k === 'n') { e.preventDefault(); this.pageNote(); }
@@ -871,7 +1000,7 @@ export class Reader {
       else if (k === 'c') { this.tab = 'contents'; this.openSidebar(); this.renderSidebar(); }
       else if (k === '1') this.view !== 'scroll' && this.setMode('scroll');
       else if (k === '2') this.view !== 'paged' && this.setMode('paged');
-      else if (k === '3') this.setMode(this.mode3d ? this.last2d : '3d');
+      else if (k === '3' && !this.epub) this.setMode(this.mode3d ? this.last2d : '3d');
       else if (k === '+' || k === '=') this.zoom(1.15);
       else if (k === '-') this.zoom(1 / 1.15);
     });

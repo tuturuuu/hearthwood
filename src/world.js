@@ -35,6 +35,8 @@ const PALETTE = {
     fire: 1, fireCol: '#ffe08a', bloom: 0.85, lamp: 9, bulb: 4 }),
   dusk: palette({ shadow: '#5a2e1e', hemiSky: '#ffc89a', hemiGround: '#b5875a', sun: 1.8, sunColor: '#ff9a5c', bloom: 0.35, lamp: 3, bulb: 2 }),
   rain: palette({ shadowO: 0.08, hemiSky: '#cfd8dc', sun: 0.45, sunColor: '#e3e9ec', bloom: 0.2, fire: 0 }),
+  // a wet night: a touch greyer and dimmer than a clear one, lamps still glowing, no fireflies
+  rainNight: palette({ shadowO: 0.2, hemiSky: '#55618c', hemi: 0.6, sun: 0.35, sunColor: '#8a98c0', bloom: 0.7, fire: 0 }),
 };
 const ENV_KEYS = ['day', 'dusk', 'rain', 'snow', 'leaves', 'snowCover'];
 
@@ -538,7 +540,7 @@ export class Library {
     }
 
     this.sign = new THREE.Mesh(new THREE.PlaneGeometry(4, 1.17),
-      new THREE.MeshBasicMaterial({ map: signTexture(['Drop PDFs anywhere', 'or press I to add books']), transparent: true }));
+      new THREE.MeshBasicMaterial({ map: signTexture(['Drop books anywhere', 'PDF or EPUB · or press I']), transparent: true }));
     this.sign.position.set(0, 2.8, 2);
     s.add(this.sign);
 

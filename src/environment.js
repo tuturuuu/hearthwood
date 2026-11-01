@@ -79,7 +79,12 @@ export function blendInto(target, over, t) {
 export function resolvePalette(P, env) {
   const out = blendInto(clonePalette(P.night), P.day, env.day);
   blendInto(out, P.dusk, env.dusk);
-  if (P.rain) blendInto(out, P.rain, env.rain * 0.75);
-  if (P.snow) blendInto(out, P.snow, env.snowCover * (0.35 + 0.65 * env.day));
+  // weather palettes describe the daytime look; after dark they hand over to their night variants
+  // (blending a daytime overcast in at midnight lit the whole world up)
+  const day = env.day, night = 1 - env.day;
+  if (P.rain) blendInto(out, P.rain, env.rain * 0.75 * day);
+  if (P.rainNight) blendInto(out, P.rainNight, env.rain * 0.75 * night);
+  if (P.snow) blendInto(out, P.snow, env.snowCover * day);
+  if (P.snowNight) blendInto(out, P.snowNight, env.snowCover * 0.85 * night);
   return out;
 }

@@ -60,12 +60,12 @@
     <div class="hud-actions">
       <button id="btnView" class="icon-btn" title="Switch between 3D world and grid (G)"><i data-lucide="layout-grid" class="show-3d"></i><i data-lucide="box" class="show-grid"></i></button>
       <button id="btnChar" class="icon-btn" title="Change character (C)"><i data-lucide="user-round"></i></button>
-      <button id="btnMusic" class="icon-btn" title="Sound on / off (M)"><i data-lucide="music-2" class="on"></i><i data-lucide="volume-x" class="off"></i></button>
+      <button id="btnMusic" class="icon-btn" title="Music on / off (M)"><i data-lucide="music-2" class="on"></i><i data-lucide="volume-x" class="off"></i></button>
       <button class="icon-btn themeToggle" title="Time of day: real clock / day / night (T)"><i data-lucide="clock-3" class="t-auto"></i><i data-lucide="sun" class="t-day"></i><i data-lucide="moon" class="t-night"></i></button>
       <button id="btnWorld" class="icon-btn" title="World, timer &amp; backup settings"><i data-lucide="sliders-horizontal"></i></button>
-      <button id="btnImport" class="pill" title="Import PDFs (I)"><i data-lucide="plus"></i> Add PDFs</button>
+      <button id="btnImport" class="pill" title="Add PDF or EPUB books (I)"><i data-lucide="plus"></i> Add books</button>
     </div>
-    <input id="fileInput" type="file" accept="application/pdf" multiple hidden />
+    <input id="fileInput" type="file" accept="application/pdf,.pdf,application/epub+zip,.epub" multiple hidden />
     <input id="backupInput" type="file" accept="application/json,.json" hidden />
   </div>
   <div id="help">
@@ -104,6 +104,13 @@
       <button data-v="balanced"><i data-lucide="scale"></i> Balanced</button>
       <button data-v="battery"><i data-lucide="battery"></i> Battery saver</button>
     </div>
+    <label>Sound</label>
+    <div class="wp-sound">
+      <span>Music</span>
+      <div class="seg" id="wpMusic"><button data-v="on"><i data-lucide="music-2"></i> On</button><button data-v="off"><i data-lucide="volume-x"></i> Off</button></div>
+      <span>Sound effects <small>rain, fire, birds, clicks</small></span>
+      <div class="seg" id="wpSfx"><button data-v="on"><i data-lucide="audio-lines"></i> On</button><button data-v="off"><i data-lucide="volume-x"></i> Off</button></div>
+    </div>
     <label>Halloween</label>
     <div class="seg" id="wpHalloween">
       <button data-v="auto"><i data-lucide="calendar"></i> Auto</button>
@@ -122,7 +129,7 @@
       <button id="wpExportNotes"><i data-lucide="notebook-pen"></i> Notes &amp; progress</button>
       <button id="wpImport"><i data-lucide="upload"></i> Restore…</button>
     </div>
-    <p class="wp-note">A full backup includes your PDFs. A notes backup is tiny and merges into books you already have.</p>
+    <p class="wp-note">A full backup includes your books. A notes backup is tiny and merges into books you already have.</p>
   </div>
 
   <!-- Welcome letter (opened from the sign by the spawn point) -->
@@ -162,7 +169,7 @@
     <div class="dl-text"></div>
     <span class="dl-more"></span>
   </div>
-  <div id="dropzone" hidden><div><i data-lucide="file-up"></i> Drop PDFs to shelve them</div></div>
+  <div id="dropzone" hidden><div><i data-lucide="file-up"></i> Drop PDF or EPUB books to shelve them</div></div>
   <div id="fade"></div>
 
   <!-- Reader -->
@@ -190,7 +197,7 @@
           <button id="rModePaged" title="Flip pages sideways (2)"><i data-lucide="gallery-horizontal"></i></button>
           <button id="rMode3d" title="3D book (3)"><i data-lucide="book-open"></i></button>
         </div>
-        <button id="rMusic" class="icon-btn" title="Sound on / off (M)"><i data-lucide="music-2" class="on"></i><i data-lucide="volume-x" class="off"></i></button>
+        <button id="rMusic" class="icon-btn" title="Music on / off (M)"><i data-lucide="music-2" class="on"></i><i data-lucide="volume-x" class="off"></i></button>
         <button class="icon-btn themeToggle" title="Time of day: real clock / day / night (T)"><i data-lucide="clock-3" class="t-auto"></i><i data-lucide="sun" class="t-day"></i><i data-lucide="moon" class="t-night"></i></button>
       </div>
     </header>
@@ -210,6 +217,7 @@
         <button id="rFlipPrev" class="flip-btn prev" title="Previous page (←)"><i data-lucide="chevron-left"></i></button>
         <button id="rFlipNext" class="flip-btn next" title="Next page (→)"><i data-lucide="chevron-right"></i></button>
         <div id="view3d" hidden></div>
+        <div id="epubView" hidden><div id="epubPage"></div><div id="epubTurn"></div></div>
         <div id="progress"><i></i></div>
       </main>
     </div>

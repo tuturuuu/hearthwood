@@ -46,7 +46,7 @@ export const VILLAGERS = [
       ({ books, last }) => books.length
         ? [`Welcome back to the Reading Grove! Your shelves hold ${books.length} book${books.length > 1 ? 's' : ''}.`,
           last ? `Last time you were in “${last.title}”, page ${last.lastPage || 1} of ${last.pages}. The nook down the aisle is lovely for picking it back up.` : 'Pick any spine and press Enter to start reading.']
-        : ['Oh! A visitor. I’m Mira, I look after these shelves.', 'They’re empty for now… drop a PDF anywhere on the screen and I’ll shelve it for you.'],
+        : ['Oh! A visitor. I’m Mira, I look after these shelves.', 'They’re empty for now… drop a PDF or EPUB anywhere on the screen and I’ll shelve it for you.'],
       ({ n }) => { const [q, by] = pick(QUOTES, n); return ['Here’s one I keep coming back to:', `“${q}”\n— ${by}`]; },
       () => ['A reading tip: sit on any bench, log or hay bale with E, then press Enter to read from right there.',
         'Your highlights, notes and bookmarks never leave this browser. I’m a very discreet librarian.'],

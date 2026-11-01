@@ -62,6 +62,11 @@ const PALETTES = {
     shallow: '#6ea6aa', bladeTip: '#a6be6c', window: 0.8 }),
   snow: palette({ grass: '#e8edf0', grass2: '#dce4e8', path: '#d9d0c4', soil: '#cfd4d8', sand: '#e3e3df', fog: '#dfe7ea',
     blade: '#9fb5a8', bladeTip: '#f2f6f7', shallow: '#a9d4e0' }),
+  // the same weather after dark: wet, darker ground for rain; snow lit only by the moon
+  rainNight: palette({ grass: '#1d3836', grass2: '#18302d', path: '#343a59', sand: '#333a57', fog: '#0b151c', deep: '#0d2440',
+    shallow: '#1a4560', bladeTip: '#35685a' }),
+  snowNight: palette({ grass: '#5a6884', grass2: '#53617d', path: '#4b5170', soil: '#474e67', sand: '#535e7a', fog: '#121c29',
+    blade: '#2c3f45', bladeTip: '#7b8ca8', shallow: '#284c64' }),
 };
 
 // ---------- zone geometry (shared by JS placement and the ground shader) ----------

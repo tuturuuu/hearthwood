@@ -10,9 +10,11 @@ const BPM = 74;
 
 export class Sound {
   constructor() {
-    let pref = null;
-    try { pref = localStorage.getItem('music'); } catch {}
-    this.musicOn = pref !== 'off';
+    let music = null, fx = null;
+    try { music = localStorage.getItem('music'); fx = localStorage.getItem('sfx'); } catch {}
+    this.musicOn = music !== 'off';
+    // effects + ambience have their own switch; someone who muted everything before stays muted
+    this.sfxOn = fx ? fx !== 'off' : music !== 'off';
     this.ctx = null;
     this.step = 0;
   }
@@ -20,8 +22,10 @@ export class Sound {
   ensure() {
     if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return this.ctx; }
     const ctx = (this.ctx = new AudioContext());
-    this.master = ctx.createGain(); this.master.gain.value = this.musicOn ? 0.8 : 0; this.master.connect(ctx.destination);
-    this.sfxBus = ctx.createGain(); this.sfxBus.gain.value = 0.5; this.sfxBus.connect(this.master);
+    this.master = ctx.createGain(); this.master.gain.value = 0.8; this.master.connect(ctx.destination);
+    // effects and ambience share one switchable gain, separate from the music
+    this.fx = ctx.createGain(); this.fx.gain.value = this.sfxOn ? 1 : 0; this.fx.connect(this.master);
+    this.sfxBus = ctx.createGain(); this.sfxBus.gain.value = 0.5; this.sfxBus.connect(this.fx);
 
     // music chain: bus -> lofi lowpass -> music gain -> master (+ reverb send)
     this.musicGain = ctx.createGain(); this.musicGain.gain.value = 0; this.musicGain.connect(this.master);
@@ -49,12 +53,18 @@ export class Sound {
   }
 
   // ---------- music ----------
-  /** The sound toggle mutes everything: music, effects and ambience. */
+  /** The lo-fi track only; effects and ambience have their own switch (setEffects). */
   setMusic(on) {
     this.musicOn = on;
     try { localStorage.setItem('music', on ? 'on' : 'off'); } catch {}
-    if (this.ctx) this.master.gain.setTargetAtTime(on ? 0.8 : 0, this.ctx.currentTime, 0.15);
     on ? this.startMusic() : this.stopMusic();
+  }
+
+  /** Clicks, page flips, voices and the world's ambience: rain, fire, water, birds and crickets. */
+  setEffects(on) {
+    this.sfxOn = on;
+    try { localStorage.setItem('sfx', on ? 'on' : 'off'); } catch {}
+    if (this.ctx) this.fx.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.15);
   }
 
   startMusic() {
@@ -188,7 +198,7 @@ export class Sound {
     if (!this.ambTimer) {
       this.ambBus = this.ctx.createGain();
       this.ambBus.gain.value = 0.5;
-      this.ambBus.connect(this.master);
+      this.ambBus.connect(this.fx);
       this.ambTimer = setInterval(() => this.ambientTick(), 120);
       // steady rain hiss, faded in/out by the weather
       const src = this.ctx.createBufferSource();
@@ -204,7 +214,7 @@ export class Sound {
 
   ambientTick() {
     const ctx = this.ctx, a = this.amb;
-    if (!a || !this.musicOn || ctx.state !== 'running') return;
+    if (!a || !this.sfxOn || ctx.state !== 'running') return;
     const t = ctx.currentTime + 0.05;
     if (!a.dark && a.rain < 0.5 && Math.random() < 0.05) {
       // a little bird: 2–4 quick chirps
@@ -238,7 +248,7 @@ export class Sound {
 
   // ---------- sfx ----------
   sfx(name, pitch = 1) {
-    if (!this.ctx || !this.musicOn) return;
+    if (!this.ctx || !this.sfxOn) return;
     const ctx = this.ctx, t = ctx.currentTime;
     if (name === 'flip') {
       const f = this.noiseHit(t, 'bandpass', 900, 1.2, 0.35, 0.28, this.sfxBus);
