@@ -54,7 +54,7 @@ select text to highlight · click a highlight to edit/add a note · Ctrl+scroll 
 - `src/portfolio.js` + `src/profile.js` – the portfolio clearing · `src/life.js` – ducks, chickens, cat · `src/fishing.js` – fishing · `src/experience.js` – role areas · `src/nook.js` – reading nook
 - `src/reader.js` – continuous PDF viewer, table of contents, annotations
 - `src/book3d.js` – 3D page-flip view
-- `src/audio.js` – procedural lo-fi music + sound effects (WebAudio)
+- `src/audio.js` – procedural lo-fi music (three tracks: Hearth, Rainy window, First snow; Auto follows the weather), layered rain / wind / campfire ambience + sound effects (WebAudio, no audio files)
 - `src/character.js` – loads the KayKit characters + shared animation rigs
 
 ## Credits

@@ -5,7 +5,7 @@ import { describeEpub, isEpub } from './epub.js';
 import { Library } from './world.js';
 import { ZONE_NAMES } from './scenery.js';
 import { Reader } from './reader.js';
-import { sound } from './audio.js';
+import { sound, TRACK_MODES } from './audio.js';
 import { toast, refreshIcons, icon } from './ui.js';
 import { environmentFor, TIME_MODES, WEATHER_MODES } from './environment.js';
 import { Pomodoro, MODE_LABELS, fmt } from './pomodoro.js';
@@ -50,6 +50,7 @@ function syncMusicUI() {
   for (const [id, on] of [['wpMusic', sound.musicOn], ['wpSfx', sound.sfxOn]]) {
     $(id).querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === (on ? 'on' : 'off')));
   }
+  $('wpTrack').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === sound.trackMode));
 }
 function toggleMusic() { sound.setMusic(!sound.musicOn); syncMusicUI(); }
 $('btnMusic').onclick = toggleMusic;
@@ -64,6 +65,14 @@ $('wpSfx').onclick = (e) => {
   sound.setEffects(v === 'on');
   syncMusicUI();
   sound.sfx('click');
+};
+$('wpTrack').onclick = (e) => {
+  const v = e.target.closest('button')?.dataset.v;
+  if (!v) return;
+  sound.setTrack(v);
+  if (!sound.musicOn) toggleMusic();
+  syncMusicUI();
+  toast(v === 'auto' ? 'Music follows the weather' : `Now playing: ${TRACK_MODES[v]}`);
 };
 syncMusicUI();
 // browsers only allow audio after a user gesture

@@ -1032,7 +1032,9 @@ export class Library {
       this.ambT = 0;
       const fire = Math.max(0, 1 - Math.hypot(pp.x - ZONES.campfire.x, pp.z - ZONES.campfire.z) / 9);
       const water = Math.max(0, 1 - Math.max(0, pondDist(pp.x, pp.z)) * 1.5);
-      sound.setAmbience({ dark: this.dark, fire, water, rain: this.env.rain });
+      // the fire burns low in rain and snow, so it crackles quieter too
+      const lit = (1 - this.env.rain) * (1 - this.env.snow * 0.7);
+      sound.setAmbience({ dark: this.dark, fire: fire * lit, water, rain: this.env.rain, snow: this.env.snow });
     }
     this.sign.position.y = 2.8 + Math.sin(this.time * 1.5) * 0.08;
     this.sign.quaternion.copy(this.camera.quaternion);
