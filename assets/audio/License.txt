@@ -1,0 +1,5 @@
+campfire.mp3
+  From "Nighttime_Campfire_Campfire" in the Hubs Sound Pack by Mozilla Hubs / Hubs Foundation
+  https://github.com/Hubs-Foundation/hubs-sound-pack
+  License: CC-BY 2.0 — https://creativecommons.org/licenses/by/2.0/
+  Changes: trimmed to a 36-second seamless loop, low rumble filtered out, steady background noise reduced, loudness normalised.
