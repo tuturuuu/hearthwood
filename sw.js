@@ -9,9 +9,9 @@
 // removing or changing files:  python3 tools/build_sw.py
 
 // <generated>
-const VERSION = '8d6d74cc6352';
+const VERSION = '93847ea432df';
 const FILES = [
-"./",
+"index.html",
 "manifest.webmanifest",
 "src/audio.js",
 "src/backup.js",
@@ -499,66 +499,107 @@ async function report(msg) {
   for (const c of await self.clients.matchAll({ includeUncontrolled: true })) c.postMessage(msg);
 }
 
-async function precache() {
-  const cache = await caches.open(CACHE);
-  const todo = [...FILES, ...CDN, FONT_CSS];
-  let done = 0;
-  const save = async (url) => {
-    // reuse a copy from the previous version when the file is versioned (CDN) or unchanged
-    const req = new Request(url, { cache: url.startsWith('http') ? 'default' : 'no-cache' });
-    const res = await fetch(req);
-    if (!res.ok) throw new Error(`${res.status} ${url}`);
-    await cache.put(url, res);
-    if (++done % 10 === 0 || done === todo.length) report({ type: 'sw-progress', done, total: todo.length });
-  };
-  // Google Fonts serves a stylesheet that points at font files; save those too
-  const fontFiles = fetch(FONT_CSS).then((r) => r.text())
-    .then((css) => Promise.allSettled([...css.matchAll(/url\((https:[^)]+)\)/g)].map((m) => cache.add(m[1]))));
-  // a few at a time keeps the install polite on slow connections
-  const queue = [...todo];
-  const failures = [];
-  await Promise.all(Array.from({ length: 6 }, async () => {
-    while (queue.length) { const u = queue.shift(); try { await save(u); } catch (e) { failures.push(u); } }
-  }));
-  await fontFiles.catch(() => {});
-  // our own files must all be saved; a CDN hiccup only means that file is saved later, when used
-  const missing = failures.filter((u) => !u.startsWith('http'));
-  if (missing.length) throw new Error(`Could not save: ${missing.join(', ')}`);
+/** A clean copy of a response: redirected responses can't be used to answer a page load. */
+async function clean(res) {
+  if (!res.redirected) return res;
+  return new Response(await res.blob(), { status: res.status, statusText: res.statusText, headers: res.headers });
+}
+
+/** Fetch one file and save it, retrying a couple of times on hiccups. */
+async function save(cache, url, tries = 3) {
+  for (let i = 0; ; i++) {
+    try {
+      const req = new Request(url, { cache: url.startsWith('http') ? 'default' : 'no-cache' });
+      const res = await fetch(req);
+      if (!res.ok) throw new Error(`${res.status} ${url}`);
+      await cache.put(url, await clean(res));
+      return;
+    } catch (e) {
+      if (i + 1 >= tries) throw e;
+      await new Promise((r) => setTimeout(r, 800 * 2 ** i));
+    }
+  }
+}
+
+// The page itself plus the code: without these nothing runs, so the install waits for them.
+const isCore = (u) => u === 'index.html' || u === 'manifest.webmanifest' || u.startsWith('src/');
+
+/**
+ * Save everything not yet in the cache. Returns how many files are still missing; those are
+ * tried again on the next visit, and anything used in the meantime is saved as it loads.
+ */
+let filling = null;
+function fill() {
+  return (filling ??= (async () => {
+    const cache = await caches.open(CACHE);
+    const all = [...FILES, ...CDN, FONT_CSS];
+    const have = new Set((await cache.keys()).map((r) => r.url));
+    const todo = all.filter((u) => !have.has(new URL(u, self.location).href));
+    let done = all.length - todo.length;
+    const queue = [...todo], failed = [];
+    report({ type: 'sw-progress', done, total: all.length });
+    await Promise.all(Array.from({ length: 4 }, async () => {
+      while (queue.length) {
+        const u = queue.shift();
+        try { await save(cache, u); } catch { failed.push(u); }
+        if (++done % 10 === 0 || done === all.length) report({ type: 'sw-progress', done, total: all.length });
+      }
+    }));
+    // Google Fonts serves a stylesheet that points at font files; save those too
+    try {
+      const css = await (await cache.match(FONT_CSS))?.text();
+      if (css) await Promise.allSettled([...css.matchAll(/url\((https:[^)]+)\)/g)].map((m) => save(cache, m[1], 2)));
+    } catch {}
+    filling = null;
+    // only our own files count: a CDN file that failed is saved later, when it's first used
+    const missing = failed.filter((u) => !u.startsWith('http'));
+    report(missing.length ? { type: 'sw-partial', missing: missing.length, total: all.length } : { type: 'sw-ready', version: VERSION });
+    return missing;
+  })());
 }
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(precache().then(() => self.skipWaiting()));
+  e.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    // the code first (must succeed), then everything else in the background after activation
+    await Promise.all(FILES.filter(isCore).map((u) => save(cache, u)));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
     for (const k of await caches.keys()) if (k.startsWith('hearthwood-') && k !== CACHE) await caches.delete(k);
     await self.clients.claim();
-    report({ type: 'sw-ready', version: VERSION });
   })());
+  fill();
 });
 
+// each page load asks for the status; that also finishes any files a previous visit couldn't save
 self.addEventListener('message', (e) => {
-  if (e.data === 'status') caches.has(CACHE).then((ok) => e.source?.postMessage({ type: ok ? 'sw-ready' : 'sw-missing', version: VERSION }));
+  if (e.data === 'status') e.waitUntil(fill()); // keeps the worker awake until the download is done
 });
 
 const sameOrigin = (url) => url.origin === self.location.origin;
 
 /** Network first with a time limit, falling back to the saved copy. */
-async function networkFirst(req, key) {
+async function networkFirst(req, key, fallback) {
   const cache = await caches.open(CACHE);
   const net = fetch(req).then((res) => {
-    if (res.ok) cache.put(key, res.clone());
+    if (res.ok) clean(res.clone()).then((c) => cache.put(key, c));
     return res;
   });
   const slow = new Promise((resolve) => setTimeout(resolve, 4000));
+  const saved = () => cache.match(key, { ignoreSearch: true }).then((r) => r || (fallback && cache.match(fallback)));
   try {
     const first = await Promise.race([net, slow]);
+    // a page load that the host answers with an error (some hosts 404 a folder address) gets the saved page
+    if (first && !first.ok && fallback) return (await saved()) || first;
     if (first) return first;
     // the network is dragging: answer from the saved copy if there is one, otherwise keep waiting
-    return (await cache.match(key, { ignoreSearch: true })) || (await net);
+    return (await saved()) || (await net);
   } catch {
-    const hit = await cache.match(key, { ignoreSearch: true });
+    const hit = await saved();
     if (hit) return hit;
     throw new Error('offline and not saved');
   }
@@ -569,7 +610,7 @@ async function cacheFirst(req) {
   const hit = await cache.match(req.url) || await cache.match(req);
   if (hit) return hit;
   const res = await fetch(req);
-  if (res.ok || res.type === 'opaque') cache.put(req.url, res.clone());
+  if (res.ok) cache.put(req.url, res.clone());
   return res;
 }
 
@@ -578,7 +619,10 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (req.mode === 'navigate' && sameOrigin(url)) {
-    e.respondWith(networkFirst(req, new URL('./', self.registration.scope).href).catch(() => Response.error()));
+    // every page of the site is index.html; some hosts don't serve a folder address, so key by the file
+    const index = new URL('index.html', self.registration.scope).href;
+    e.respondWith(networkFirst(req, url.pathname.endsWith('/') ? index : url.href.split('#')[0].split('?')[0], index)
+      .catch(() => Response.error()));
   } else if (sameOrigin(url)) {
     e.respondWith(networkFirst(req, url.href.split('#')[0].split('?')[0]).catch(() => Response.error()));
   } else if (/^(cdn\.jsdelivr\.net|fonts\.googleapis\.com|fonts\.gstatic\.com)$/.test(url.hostname)) {

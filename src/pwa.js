@@ -40,7 +40,7 @@ export function initPWA() {
   // During local development the dev server should always serve fresh files: skip the worker there,
   // unless asked for with ?sw (to test offline mode locally).
   const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
-  if (!('serviceWorker' in navigator) || (local && !new URLSearchParams(location.search).has('sw'))) {
+  if (!('serviceWorker' in navigator) || (local && !navigator.serviceWorker.controller && !new URLSearchParams(location.search).has('sw'))) {
     setStatus(false, local ? 'Offline copy is off on localhost (add ?sw to test)' : 'This browser can’t save an offline copy');
     return;
   }
@@ -57,7 +57,7 @@ export function initPWA() {
       if (!announced && !seen) toast('Hearthwood is ready to use offline');
       announced = true;
     }
-    if (m.type === 'sw-missing') setStatus(false, 'Saving for offline…');
+    if (m.type === 'sw-partial') setStatus(false, `Saved ${m.total - m.missing} of ${m.total} files for offline; the rest next visit`);
   });
 
   setStatus(false, 'Saving for offline…');

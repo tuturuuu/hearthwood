@@ -28,7 +28,7 @@ for f in files:
     h.update(f.read_bytes())
 version = h.hexdigest()[:12]
 
-urls = ['./'] + [f.relative_to(ROOT).as_posix() for f in files if f.name != 'index.html']
+urls = [f.relative_to(ROOT).as_posix() for f in files]
 block = f"// <generated>\nconst VERSION = '{version}';\nconst FILES = {json.dumps(urls, indent=0)};\n// </generated>"
 sw = ROOT / 'sw.js'
 text = sw.read_text()
