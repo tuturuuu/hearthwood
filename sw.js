@@ -9,7 +9,7 @@
 // removing or changing files:  python3 tools/build_sw.py
 
 // <generated>
-const VERSION = '93847ea432df';
+const VERSION = '9d87a1d556a8';
 const FILES = [
 "index.html",
 "manifest.webmanifest",
@@ -391,6 +391,8 @@ const FILES = [
 "assets/nature/tree_thin.glb",
 "assets/nature/tree_thin_dark.glb",
 "assets/nature/tree_thin_fall.glb",
+"assets/screenshots/narrow.jpg",
+"assets/screenshots/wide.jpg",
 "assets/survival/Textures/colormap.png",
 "assets/survival/barrel-open.glb",
 "assets/survival/barrel.glb",
