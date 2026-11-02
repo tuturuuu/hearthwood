@@ -11,6 +11,7 @@ import { environmentFor, TIME_MODES, WEATHER_MODES } from './environment.js';
 import { Pomodoro, MODE_LABELS, fmt } from './pomodoro.js';
 import { exportBackup, importBackup } from './backup.js';
 import { PROFILE, WELCOME } from './profile.js';
+import { initPWA } from './pwa.js';
 
 const $ = (id) => document.getElementById(id);
 const root = document.documentElement;
@@ -537,4 +538,5 @@ addEventListener('keydown', (e) => {
 
 refreshIcons();
 refresh();
+initPWA();
 window.shelfspace = { library, reader, pomo }; // handy for debugging in the console

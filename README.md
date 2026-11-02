@@ -35,6 +35,15 @@ Ducks paddle on the pond, chickens peck by the barn and a cat follows you around
 The sky follows your real clock (sunrise, golden hour, night) and the season follows the calendar: autumn tints the trees and
 drops leaves, winter brings snow. Weather changes every few hours (rain ripples the pond). Override both in the ⚙ panel.
 
+## Install & offline
+Hearthwood is an installable app: use the browser's Install button (or ⚙ → *Install Hearthwood*; on iPhone/iPad: Share → Add to Home Screen).
+After the first visit everything (village, music, sounds, reader libraries) is saved, so it opens and runs with no connection.
+Online visits still fetch the newest files first, so updates arrive straight away.
+
+**After adding, removing or changing files, run `python3 tools/build_sw.py` before committing.** It refreshes the file list
+and version stamp in `sw.js`, so installed copies pick up the change. The service worker is off on `localhost`
+(so the dev server always serves fresh files); add `?sw` to the URL to test offline mode locally.
+
 ## Backup
 Everything lives in your browser, so back it up from the ⚙ panel: a **full backup** includes your PDFs, a **notes backup**
 is tiny and merges progress, bookmarks, highlights and notes into books you already have.
@@ -54,6 +63,7 @@ select text to highlight · click a highlight to edit/add a note · Ctrl+scroll 
 - `src/portfolio.js` + `src/profile.js` – the portfolio clearing · `src/life.js` – ducks, chickens, cat · `src/fishing.js` – fishing · `src/experience.js` – role areas · `src/nook.js` – reading nook
 - `src/reader.js` – continuous PDF viewer, table of contents, annotations
 - `src/book3d.js` – 3D page-flip view
+- `sw.js` + `manifest.webmanifest` + `src/pwa.js` – installable app and offline copy (`tools/build_sw.py` writes the file list)
 - `src/audio.js` – procedural lo-fi music (three tracks: Hearth, Rainy window, First snow; Auto follows the weather), layered rain / wind / campfire ambience + sound effects (WebAudio, no audio files)
 - `src/character.js` – loads the KayKit characters + shared animation rigs
 

@@ -5,7 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Hearthwood</title>
   <link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
-  <link rel="apple-touch-icon" href="assets/icon.svg" />
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Hearthwood" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="theme-color" content="#f3d3b0" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -130,6 +135,12 @@
       <span>Break <input id="wpBreak" type="number" min="1" max="60" /></span>
       <span>Long break <input id="wpLong" type="number" min="1" max="90" /></span>
     </div>
+    <label>App &amp; offline</label>
+    <div class="wp-app">
+      <button id="wpInstall" hidden><i data-lucide="download"></i> Install Hearthwood</button>
+      <span id="wpOffline"><i data-lucide="cloud-off"></i> <span>Checking offline copy…</span></span>
+    </div>
+    <p class="wp-note" id="wpInstallHint" hidden></p>
     <label>Backup</label>
     <div class="wp-backup">
       <button id="wpExportFull"><i data-lucide="archive"></i> Full backup</button>
